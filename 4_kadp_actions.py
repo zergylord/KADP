@@ -66,10 +66,13 @@ def viz_trajectory():
             test_A = test_V.argmax(0)
         if i % 2 == 0:
             plt.clf()
+            '''
             axes = plt.gca()
             axes.set_xlim([-4,4])
             axes.set_ylim([-4,4])
             plt.scatter(test_S[:,0],test_S[:,1],s=10*((test_V_max)),c=test_V_max)
+            '''
+            plt.hexbin(test_S[:,0],test_S[:,1],gridsize=15,extent=(-4,4,-4,4))
             plt.pause(.01)
         for s in range(test_n_samples):
             test_S[s] = test_SPrime[test_A[s],s]

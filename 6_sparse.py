@@ -3,6 +3,8 @@ from scipy.stats import norm
 from scipy.spatial.distance import cdist
 from sklearn.neighbors import NearestNeighbors
 from matplotlib import pyplot as plt
+import time
+cur_time = time.clock()
 n_samples = 10000
 test_n_samples = 1000
 n_actions = 4
@@ -12,7 +14,9 @@ s_dim = 2 #assume this is fixed, since actions are rotations
 b = .1
 gamma = .9
 epsilon = 0
-change_samples = False
+change_samples = True
+display = True
+interact = True
 '''function defs'''
 def get_transition(S,A):    
     return S + np.asarray([radius*np.cos(rad_inc*A),radius*np.sin(rad_inc*A)]).transpose()
@@ -31,13 +35,12 @@ def get_weighting(x,x_i):
     weights = kernel(x,x_i)
     return (weights / np.expand_dims(weights.sum(1),1))
 def bellman_op(W,R,V):
-    return W.dot(R+gamma*V)
+    return (W/np.expand_dims(W.sum(1),1)).dot(R+gamma*V)
 def get_reward(SPrime):
     return np.float32((SPrime[:,0] > 1)
             *(SPrime[:,0] < 2)
             *(SPrime[:,1] > -1)
             *(SPrime[:,1] < 0))
-interact = True
 if interact:
     plt.ion()
 samples_per_action = int(n_samples/n_actions)
@@ -52,6 +55,7 @@ V = np.zeros((n_actions,samples_per_action))
 for a in range(n_actions):
     SPrime[a] = get_transition(S[a],a)
     R[a] = get_reward(SPrime[a])
+    SPrime[a,R[a]==1,:] = S[a,R[a]==1,:]
     A[a] = a
 S_view = S.reshape(-1,s_dim)
 A_view = A.reshape(-1)
@@ -62,7 +66,7 @@ V_view = V.reshape(-1)
 def get_action_weightings():
     W = np.zeros((n_actions,n_samples,samples_per_action))
     for a in range(n_actions):
-        W[a] = (get_weighting(SPrime_view,S[a]))
+        W[a] = (kernel(SPrime_view,S[a]))
     return W
 def add_tuple(t,s,a,r,sPrime):
     global creation_time,S,A,R,SPrime,W,V
@@ -71,14 +75,12 @@ def add_tuple(t,s,a,r,sPrime):
     S[a,ind] = s
     R[a,ind] = r
     SPrime[a,ind] = sPrime
-    W = get_action_weightings()
-    ''' TODO:store distance matrix and partition vector seperately, so don't recompute distance matrix
-    new_row = (get_weighting(sPrime,S[A==a]))
-    new_col = (get_weighting(SPrime,s))
-    print(new_row.shape,new_col.shape)
-    W[a,oldest_W_ind[a],:] = np.squeeze(new_row)
-    W[a,:,oldest_W_ind[a]] = np.squeeze(new_col)
-    '''
+    #W = get_action_weightings()
+    for act in range(n_actions):
+        new_row = (kernel(sPrime,S[act]))
+        W[act,a*samples_per_action+ind,:] = np.squeeze(new_row)
+    new_col = (kernel(SPrime_view,s))
+    W[a,:,ind] = np.squeeze(new_col)
     V[a,ind] = 0 
     #V[oldest_S_ind[a]] = bellman_op(new_row,r,V[A==a])
 def value_iteration(W):
@@ -116,20 +118,25 @@ def select_action(cur_S):
 
 '''main loop'''
 W = get_action_weightings()
-refresh = int(1e1)
+refresh = int(1e0)
 cur_s = (np.random.rand(1,s_dim)-.5)*2*3
-for i in range(int(5e2)):
+for i in range(int(1e1)):
     if change_samples:
         '''action selection'''
-        #cur_s = (np.random.rand(1,s_dim)-.5)*2*3
         cur_a,_ = select_action(cur_s)
         cur_sPrime = get_transition(cur_s,cur_a)
         cur_r = get_reward(cur_sPrime)
-        add_tuple(i,cur_s,cur_a,cur_r,cur_sPrime)
-        cur_s = cur_sPrime
+        '''terminal via self transition and state reset'''
+        if cur_r < 1:
+            add_tuple(i,cur_s,cur_a,cur_r,cur_sPrime)
+            cur_s = cur_sPrime
+        else:
+            print('yay!')
+            add_tuple(i,cur_s,cur_a,cur_r,cur_s)
+            cur_s = (np.random.rand(1,s_dim)-.5)*2*3
     for j in range(10):
         V_view[:],change = value_iteration(W)
-    if i % refresh == 0:
+    if display and i % refresh == 0:
         print(i,change,creation_time.min(1))
         assert(all(V_view==V.reshape(-1)))
         plt.clf()
@@ -154,10 +161,13 @@ for i in range(int(5e2)):
             plt.pause(.01)
         else:
             plt.show()
-    if change < 1e-5:
-        print(i)
-        break
+        if change < 1e-5:
+            print('done',i)
+            break
+print(time.clock()-cur_time)
+'''
 plt.ioff()
 plt.show()
 plt.ion()
 viz_trajectory()
+'''

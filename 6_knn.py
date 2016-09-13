@@ -1,11 +1,12 @@
 import numpy as np
 from scipy.stats import norm
+from scipy import sparse
 from scipy.spatial.distance import cdist
 from sklearn.neighbors import NearestNeighbors
 from matplotlib import pyplot as plt
 import time
 cur_time = time.clock()
-n_samples = 10000
+n_samples = 1000
 test_n_samples = 1000
 n_actions = 4
 rad_inc = 2*np.pi/n_actions
@@ -20,20 +21,17 @@ interact = True
 '''function defs'''
 def get_transition(S,A):    
     return S + np.asarray([radius*np.cos(rad_inc*A),radius*np.sin(rad_inc*A)]).transpose()
-def kernel(x1,x2):
+'''
+only between singleton x and array X
+'''
+def kernel(x,X):
     '''Gaussian'''
-    return norm.pdf(np.clip(cdist(x1,x2)/b,0,10))
-    '''RBF (equivilent)'''
-    '''
-    #return np.exp(-np.square(cdist(x1,x2))/b)
     k = 4
-    return cdist(x1,x2)
-    '''
+    sim = norm.pdf(np.clip(cdist(x,X)/b,0,10))
+    inds = np.argpartition(sim,k-1)[:k]
+    return inds,sim
 
 
-def get_weighting(x,x_i):
-    weights = kernel(x,x_i)
-    return (weights / np.expand_dims(weights.sum(1),1))
 def bellman_op(W,R,V):
     return (W/np.expand_dims(W.sum(1),1)).dot(R+gamma*V)
 def get_reward(SPrime):
@@ -52,6 +50,9 @@ SPrime = np.zeros((n_actions,samples_per_action,s_dim))
 A = np.zeros((n_actions,samples_per_action),dtype=np.int32)
 R = np.zeros((n_actions,samples_per_action))
 V = np.zeros((n_actions,samples_per_action))
+NW_inds = np.zeros((n_actions,samples_per_action)).astype('int')
+NW_vals = np.zeros((n_actions,samples_per_action))
+mem_count = np.zeros((n_actions,)).astype('int')
 for a in range(n_actions):
     SPrime[a] = get_transition(S[a],a)
     R[a] = get_reward(SPrime[a])
@@ -62,11 +63,21 @@ A_view = A.reshape(-1)
 R_view = R.reshape(-1)
 SPrime_view = SPrime.reshape(-1,s_dim)
 V_view = V.reshape(-1)
+''' inds for view variables
+for when memories arent yet full '''
+def update_memory_vars(X):
+    global valid_inds,mem_count
+    inds = []
+    for a in n_actions:
+        base = a*samples_per_action 
+        inds += range(base,base+mem_count[a])
+    return inds
+
 '''closure defs'''
-def get_action_weightings():
+def get_initial_weightings():
     W = np.zeros((n_actions,n_samples,samples_per_action))
     for a in range(n_actions):
-        W[a] = (kernel(SPrime_view,S[a]))
+        W[a][ = (kernel(SPrime_view[valid_inds],S[a]))
     return W
 def add_tuple(t,s,a,r,sPrime):
     global creation_time,S,A,R,SPrime,W,V
@@ -75,14 +86,26 @@ def add_tuple(t,s,a,r,sPrime):
     S[a,ind] = s
     R[a,ind] = r
     SPrime[a,ind] = sPrime
-    #W = get_action_weightings()
     for act in range(n_actions):
-        new_row = (kernel(sPrime,S[act]))
-        W[act,a*samples_per_action+ind,:] = np.squeeze(new_row)
-    new_col = (kernel(SPrime_view,s))
-    W[a,:,ind] = np.squeeze(new_col)
+        #replace row
+        knn_inds,sim = kernel(sPrime,S[act])
+        #cache for updating columns
+        if act == a:
+            a_sim = sim
+        W[act,a*samples_per_action+ind,:] = 0
+        W[act,a*samples_per_action+ind,knn_inds] = sim[knn_inds]
+    #----adjust columns
+    #find rows losing a neighbor
+    mask = WN_vals[a]< a_sim
+    W[a,mask,WN_inds[a,mask]] = 0 
+    W[a,mask,ind] = a_sim[mask] 
+    #update worst neighbors
+    NW_inds[a,mask] = W[a,mask].argmax(1)
+    NW_vals[a,mask] = W[a,mask,NW_inds[a,mask]]
+
     V[a,ind] = 0 
     #V[oldest_S_ind[a]] = bellman_op(new_row,r,V[A==a])
+    mem_count[a] = min(mem_count[a] + 1,samples_per_action)
 def value_iteration(W):
     temp_V = np.zeros(W.shape[:-1])
     for a in range(n_actions):
@@ -110,7 +133,10 @@ def viz_trajectory():
 def select_action(cur_S):
     cur_V = np.zeros((n_actions,len(cur_S)))
     for a in range(n_actions):
-        cur_W_a = get_weighting(cur_S,S[a])
+        weights = np.zeros((samples_per_action,))
+        inds,vals = kernel(cur_S,S[a])
+        weights[inds] = vals
+        cur_W_a = (weights / np.expand_dims(weights.sum(1),1))
         cur_V[a] = bellman_op(cur_W_a,R[a],V[a])
     cur_V_max = cur_V.max(0)
     return np.squeeze(cur_V.argmax(0)),cur_V_max
@@ -145,18 +171,6 @@ for i in range(int(1e1)):
         #plt.scatter(SPrime[:,0],SPrime[:,1],c=V)
         #plt.hexbin(SPrime_view[:,0],SPrime_view[:,1],gridsize=15,extent=(-4,4,-4,4))
         #'''
-        '''
-        test_S = (np.random.rand(test_n_samples,s_dim)-.5)*2*3
-        test_A = np.random.randint(n_actions,size=(test_n_samples,))
-        test_SPrime = get_transition(test_S,test_A)
-        for a in range(n_actions):
-            test_mask = test_A == a
-            mask = A == a
-            test_W_a = get_weighting(test_S[test_mask],S[mask])
-            print(test_V[test_mask].shape,test_W_a.shape,R[mask].shape)
-            test_V[test_mask] = bellman_op(test_W_a,R[mask],V[mask])
-        plt.scatter(test_SPrime[:,0],test_SPrime[:,1],s=10*((test_V)),c=test_V)
-        '''
         if interact:
             plt.pause(.01)
         else:

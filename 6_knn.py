@@ -6,28 +6,44 @@ from sklearn.neighbors import NearestNeighbors
 from matplotlib import pyplot as plt
 import time
 cur_time = time.clock()
-n_samples = 2000
+n_samples = 1000
 starting_points = 100
-refresh = int(1e1)
+total_steps = int(1e4)
+refresh = int(1e2)
 sample_ticks = int(1e0)
 update_ticks = int(1e0)
 change_samples = True
+use_walls = False
 test_n_samples = 100
 n_actions = 4
 rad_inc = 2*np.pi/n_actions
-radius = .5
+radius = .25
 s_dim = 2 #assume this is fixed, since actions are rotations
 b = .1
 gamma = .9
-epsilon = .1
+anneal = int(1e3)
+epsilon = np.linspace(1,.1,anneal)
 display = True
 interact = True
+debug = False
 '''function defs'''
 def get_transition(s,a):    
     sPrime =  s + np.asarray([radius*np.cos(rad_inc*a),radius*np.sin(rad_inc*a)])
-    #sPrime += np.random.randn(2)*radius/2
-    sPrime[sPrime > 4] = 4
-    sPrime[sPrime < -4] = -4
+    sPrime += np.random.randn(2)*radius
+    if use_walls:
+        #cross the vertical wall from 0,-1 upwards
+        if sPrime[1] > -1 and sPrime[0] > 0 and s[0] <= 0:
+            sPrime[0] = 0
+        #cross the horizontal wall from -2,0 to 0,0 
+        if sPrime[0] > -2 and sPrime[0] < 0 and sPrime[1] <= 0 and s[1] > 0:
+            sPrime[1] = s[1]
+    '''reset on wall hit, mainly to avoid duplicate states for testing purposes'''
+    if debug:
+        if np.any(sPrime > 4) or np.any(sPrime < -4):
+            sPrime = (np.random.rand(s_dim)-.5)*2*3
+    else:
+        sPrime[sPrime > 4] = 4
+        sPrime[sPrime < -4] = -4
     return sPrime
 '''
 only between singleton x and array X
@@ -84,19 +100,12 @@ creation_time = np.asarray(np.tile(range(-samples_per_action,0),[n_actions,1]))
 def get_oldest_ind(a):
     return np.argmin(creation_time[a])
 SPrime = np.zeros((n_actions,samples_per_action,s_dim))
-A = np.zeros((n_actions,samples_per_action),dtype=np.int32)
 R = np.zeros((n_actions,samples_per_action))
 V = np.zeros((n_actions,samples_per_action))
 WN_inds = -1*np.ones((n_actions,n_samples)).astype('int')
 WN_vals = np.zeros((n_actions,n_samples))
 mem_count = np.zeros((n_actions,)).astype('int')
-for a in range(n_actions):
-    SPrime[a] = get_transition(S[a],a)
-    R[a] = get_reward(SPrime[a])
-    SPrime[a,R[a]==1,:] = S[a,R[a]==1,:]
-    A[a] = a
 S_view = S.reshape(-1,s_dim)
-A_view = A.reshape(-1)
 R_view = R.reshape(-1)
 SPrime_view = SPrime.reshape(-1,s_dim)
 V_view = V.reshape(-1)
@@ -128,7 +137,7 @@ def get_value(s):
         cur_V[a] = cur_W_a.dot(R[a]+gamma*V[a])
     return cur_V.max(0)
 def add_tuple(t,s,a,r,sPrime):
-    global WN_inds,WN_vals,creation_time,S,A,R,SPrime,W,V
+    global WN_inds,WN_vals,creation_time,S,R,SPrime,W,V
     #cur_V_max = get_value(s)
     if mem_count[a] == samples_per_action:
         ind = get_oldest_ind(a)
@@ -138,19 +147,18 @@ def add_tuple(t,s,a,r,sPrime):
     S[a,ind] = s
     R[a,ind] = r
     SPrime[a,ind] = sPrime
-    #print(np.nonzero(WN_inds[a,valid_inds]==-1)[0])
     mem_count[a] = min(mem_count[a] + 1,samples_per_action)
     update_valid()
     row_ind = a*samples_per_action+ind
     assert(row_ind in valid_inds)
-    ''' sanity check'''
-    '''
-    W_sane = np.zeros((n_actions,n_samples,samples_per_action))
-    for act in range(n_actions):
-        for v in valid_inds:
-            knn_inds,sim = kernel(SPrime_view[v],S[act,:mem_count[act]])
-            W_sane[act,v,knn_inds] = sim[knn_inds]
-    '''
+    if debug:
+        ''' sanity check'''
+        W_old = W.copy()
+        W_sane = np.zeros((n_actions,n_samples,samples_per_action))
+        for act in range(n_actions):
+            for v in valid_inds:
+                knn_inds,sim = kernel(SPrime_view[v],S[act,:mem_count[act]])
+                W_sane[act,v,knn_inds] = sim[knn_inds]
 
     for act in range(n_actions):
         #replace row
@@ -162,15 +170,33 @@ def add_tuple(t,s,a,r,sPrime):
         WN_vals[act,row_ind] = sim[worst_ind]
         assert np.all(WN_inds[act,valid_inds]>-1),str(a)+str(act)
     #----adjust columns
+    #find rows relying on old memory in ind
+    conflict_inds = W[a,valid_inds,ind].nonzero()[0]
+    mask = valid_mask.copy()
+    mask[row_ind] = 0 #don't overide a row we just added!
+    if len(conflict_inds) > 0:
+        vinds = np.asarray(valid_inds)
+        mask[vinds[conflict_inds]] = 0 #don't overide a row we just added!
+        for i in range(len(conflict_inds)):
+            v = valid_inds[conflict_inds[i]]
+            if v == row_ind:
+                continue
+            knn_inds,sim = kernel(SPrime_view[v],S[a,:mem_count[a]])
+            W[a,v,:] = 0 
+            W[a,v,knn_inds] = sim[knn_inds] 
+            worst_ind = knn_inds[np.argmin(sim[knn_inds])]
+            WN_inds[a,v] = worst_ind
+            WN_vals[a,v] = sim[worst_ind]
     #find rows losing a neighbor
     _,sim = kernel(s,SPrime_view[valid_inds])
-    mask = valid_mask.copy()
-    assert np.count_nonzero(W[a,mask])/len(valid_inds) == 5
-    mask[valid_inds] = WN_vals[a,valid_inds] < sim 
-    mask[row_ind] = 0 #don't overide a row we just added!
+    mask[valid_inds] = np.logical_and(mask[valid_inds],WN_vals[a,valid_inds] < sim)
     assert np.all(WN_vals[a,mask]<sim[mask[valid_inds]])
     W[a,mask,WN_inds[a,mask]] = 0 
     W[a,mask,ind] = sim[mask[valid_inds]] 
+
+    emp_knn = np.count_nonzero(W[a,valid_inds])/len(valid_inds)
+    assert  emp_knn == 5, emp_knn
+
     #update worst neighbors
     foo = W[a,mask].copy()
     foo[foo==0] = np.nan
@@ -181,7 +207,8 @@ def add_tuple(t,s,a,r,sPrime):
 
     #initial value
     V[a,ind] = 0
-    #assert np.all(W_sane==W), str(np.nonzero(W_sane!=W))+str(W[W_sane!=W])+str(W_sane[W_sane!=W])+' action: '+str(a)+' row: '+str(row_ind)
+    if debug:
+        assert np.all(W_sane==W), str(np.nonzero(W_sane!=W))+str(W_old[W_sane!=W])+str(W[W_sane!=W])+str(W_sane[W_sane!=W])+' action: '+str(a)+' row: '+str(row_ind) + ' col: ' + str(ind)
 def value_iteration(W):
     temp_V = np.zeros(W.shape[:-1])
     for a in range(n_actions):
@@ -222,16 +249,18 @@ def select_action(cur_S,epsilon):
 
 
 '''initialize with points > k'''
+s = (np.random.rand(s_dim)-.5)*2*3
 for i in range(starting_points):
     a = np.random.randint(n_actions)
-    s = (np.random.rand(s_dim)-.5)*2*3
     S[a,mem_count[a]] = s
     sPrime = get_transition(s,a)
     R[a,mem_count[a]] = get_reward(sPrime)
     if R[a,mem_count[a]] < 1:
         SPrime[a,mem_count[a]] = sPrime
+        s = sPrime
     else:
         SPrime[a,mem_count[a]] = s
+        s = (np.random.rand(s_dim)-.5)*2*3
     mem_count[a] = min(mem_count[a] + 1,samples_per_action)
 update_valid()
 for a in range(n_actions):
@@ -252,14 +281,14 @@ for j in range(100):
     V_view[:],change = value_iteration(W)
     print(change)
 '''
-for i in range(int(1e3)):
+for i in range(total_steps):
     if change_samples:
         tuples = []
         for j in range(sample_ticks):
             '''action selection'''
             #cur_s = (np.random.rand(s_dim)-.5)*2*3 #uniform sampling!
             #cur_a = np.random.randint(n_actions)
-            cur_a,_ = select_action(cur_s,epsilon)
+            cur_a,_ = select_action(cur_s,epsilon[min(i,anneal-1)])
             cur_sPrime = get_transition(cur_s,cur_a)
             cur_r = get_reward(cur_sPrime)
             '''terminal via self transition and state reset'''

@@ -6,18 +6,18 @@ from sklearn.neighbors import NearestNeighbors
 from matplotlib import pyplot as plt
 import time
 cur_time = time.clock()
-n_samples = 1000
-starting_points = 100
-total_steps = int(1e4)
+n_samples = 5000
+starting_points = 3000
+total_steps = int(1e3)
 refresh = int(1e2)
-sample_ticks = int(1e0)
+sample_ticks = int(1e1)
 update_ticks = int(1e0)
 change_samples = True
 use_walls = False
 test_n_samples = 100
 n_actions = 4
 rad_inc = 2*np.pi/n_actions
-radius = .25
+radius = .1 #.25
 s_dim = 2 #assume this is fixed, since actions are rotations
 b = .1
 gamma = .9
@@ -136,9 +136,17 @@ def get_value(s):
         cur_W_a = (weights / weights.sum())
         cur_V[a] = cur_W_a.dot(R[a]+gamma*V[a])
     return cur_V.max(0)
+def get_value_grid():
+    x = np.linspace(-4,4,100)
+    y = np.linspace(4,-4,100)
+    xv, yv = np.meshgrid(x,y)
+    VG = np.zeros((100,100))
+    for xi in range(100):
+        for yi in range(100):
+            VG[xi,yi] = get_value(np.asarray([xv[xi,yi],yv[xi,yi]]))
+    return VG
 def add_tuple(t,s,a,r,sPrime):
     global WN_inds,WN_vals,creation_time,S,R,SPrime,W,V
-    #cur_V_max = get_value(s)
     if mem_count[a] == samples_per_action:
         ind = get_oldest_ind(a)
     else:
@@ -206,6 +214,7 @@ def add_tuple(t,s,a,r,sPrime):
         assert np.all(WN_inds[act,valid_inds]>-1),str(a)+str(act)
 
     #initial value
+    #V[a,ind] = get_value(sPrime)
     V[a,ind] = 0
     if debug:
         assert np.all(W_sane==W), str(np.nonzero(W_sane!=W))+str(W_old[W_sane!=W])+str(W[W_sane!=W])+str(W_sane[W_sane!=W])+' action: '+str(a)+' row: '+str(row_ind) + ' col: ' + str(ind)
@@ -219,6 +228,7 @@ def value_iteration(W):
 def viz_trajectory():
     test_S = (np.random.rand(test_n_samples,s_dim)-.5)*2*3
     #test_S = np.random.randn(test_n_samples,s_dim)
+    plt.figure(2)
     for i in range(200):
         for j in range(test_n_samples):
             a,_ = select_action(test_S[j],0.1)
@@ -323,25 +333,33 @@ for i in range(total_steps):
         #cumr = 0
         cur_time = time.clock()
         assert(all(V_view==V.reshape(-1)))
+        plt.figure(0)
+        VG = get_value_grid()
         plt.clf()
-        #'''
+        plt.imshow(VG)
+        plt.pause(.01)
+
+        plt.figure(1)
+        plt.clf()
+        
         axes = plt.gca()
         axes.set_xlim([-4,4])
         axes.set_ylim([-4,4])
         plt.scatter(SPrime_view[:,0],SPrime_view[:,1],s=100*((V)),c=V)
         #plt.scatter(SPrime_view[:,0],SPrime_view[:,1],c=V)
         #plt.hexbin(SPrime_view[:,0],SPrime_view[:,1],gridsize=15,extent=(-4,4,-4,4))
-        #'''
         if interact:
             plt.pause(.01)
         else:
             plt.show()
+        
         '''
         if change < 1e-5:
             print('done',i)
             break
         '''
+viz_trajectory()
+'''
 plt.ioff()
 plt.show()
-plt.ion()
-viz_trajectory()
+'''

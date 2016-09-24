@@ -7,16 +7,17 @@ from scipy.sparse import lil_matrix as sparse_matrix
 from sklearn.neighbors import NearestNeighbors
 from matplotlib import pyplot as plt
 from sklearn.preprocessing import normalize
+import numpy_indexed as npi
 import time
 cur_time = time.clock()
 n_samples = 2000
 starting_points = 1000
-total_steps = int(1e2)
+total_steps = int(1e4)
 refresh = int(1e1)
 sample_ticks = int(1e1)
 update_ticks = int(1e1)
 softmax = False
-change_samples = False
+change_samples = True
 use_walls = False
 use_transform = False
 test_n_samples = 100
@@ -126,8 +127,8 @@ SPrime_view = SPrime.reshape(-1,s_dim)
 V_view = V.reshape(-1)
 W = []
 for act in range(n_actions):
-    #W.append(sparse_matrix(np.zeros((n_samples,samples_per_action),dtype='float64')))
-    W.append((np.zeros((n_samples,samples_per_action))))
+    W.append(sparse_matrix(np.zeros((n_samples,samples_per_action),dtype='float64')))
+    #W.append((np.zeros((n_samples,samples_per_action))))
 
 ''' inds for view variables
 for when memories arent yet full '''
@@ -200,9 +201,11 @@ def add_tuple(t,s,a,r,sPrime):
         knn_inds,sim = kernel(sPrime,S[act,:mem_count[act]])
         W[act][row_ind,:] = 0
         W[act][row_ind,knn_inds] = sim[knn_inds]
-        worst_ind = knn_inds[np.argmin(sim[knn_inds])]
+        assert len(W[act].data[row_ind]) == 5, W[act].data[row_ind]
+        worst_ind = np.argmin(sim[knn_inds])
+        assert worst_ind < 5
         WN_inds[act,row_ind] = worst_ind
-        WN_vals[act,row_ind] = sim[worst_ind]
+        WN_vals[act,row_ind] = sim[knn_inds[worst_ind]]
         assert np.all(WN_inds[act,valid_inds]>-1),str(a)+str(act)
     #----adjust columns
     #find rows relying on old memory in ind
@@ -217,28 +220,44 @@ def add_tuple(t,s,a,r,sPrime):
             if v == row_ind:
                 continue
             knn_inds,sim = kernel(SPrime_view[v],S[a,:mem_count[a]])
-            W[a,v,:] = 0 
-            W[a,v,knn_inds] = sim[knn_inds] 
-            worst_ind = knn_inds[np.argmin(sim[knn_inds])]
+            W[a][v,:] = 0 
+            W[a][v,knn_inds] = sim[knn_inds] 
+            assert len(W[a].data[v]) == 5, W[a].data[v]
+            worst_ind = np.argmin(sim[knn_inds])
             WN_inds[a,v] = worst_ind
-            WN_vals[a,v] = sim[worst_ind]
+            assert worst_ind < 5
+            WN_vals[a,v] = sim[knn_inds[worst_ind]]
     #find rows losing a neighbor
     _,sim = kernel(s,SPrime_view[valid_inds])
     mask[valid_inds] = np.logical_and(mask[valid_inds],WN_vals[a,valid_inds] < sim)
     assert np.all(WN_vals[a,mask]<sim[mask[valid_inds]])
-    W[a][mask,WN_inds[a,mask]] = 0 
-    W[a][mask,ind] = sim[mask[valid_inds]] 
 
+    dead_inds = WN_inds[a,mask]
+    array_of_lists = W[a].data[mask]
+    list_of_ptrs = W[a].rows[mask]
+    for i in range(len(dead_inds)):
+        array_of_lists[i].pop(dead_inds[i])
+        list_of_ptrs[i].pop(dead_inds[i])
+    W[a][mask,ind] = np.expand_dims(sim[mask[valid_inds]],1) 
+    for i in range(len(dead_inds)):
+        assert len(array_of_lists[i]) == 5 , array_of_lists[i]
+        new_worst_ind = np.argmin(array_of_lists[i])
+        assert new_worst_ind < 5, new_worst_ind
+        WN_inds[a,dead_inds[i]] = new_worst_ind
+        WN_vals[a,dead_inds[i]] = array_of_lists[i][new_worst_ind]
+
+    '''
     emp_knn = np.count_nonzero(W[a,valid_inds])/len(valid_inds)
     assert  emp_knn == 5, emp_knn
+    '''
 
     #update worst neighbors
-    foo = W[a,mask].copy()
-    foo[foo==0] = np.nan
-    WN_inds[a,mask] = np.nanargmin(foo,1) #lowest nonzero similarity
-    WN_vals[a,mask] = W[a,mask,WN_inds[a,mask]]
-    for act in range(n_actions):
-        assert np.all(WN_inds[act,valid_inds]>-1),str(a)+str(act)
+    '''
+    foo = W[a][mask].tocoo()
+    _,inds = npi.group_by(foo.row).argmin(foo.data)
+    WN_inds[a,mask] = inds #lowest nonzero similarity
+    WN_vals[a,mask] = foo.data[inds]
+    '''
 
     #initial value
     #V[a,ind] = get_value(sPrime)
@@ -305,9 +324,11 @@ for a in range(n_actions):
     for v in valid_inds:
         knn_inds,sim = kernel(SPrime_view[v],S[a,:mem_count[a]])
         W[a][v,knn_inds] = sim[knn_inds]
-        worst_ind = knn_inds[np.argmin(sim[knn_inds])]
+        assert len(W[a].data[v]) == 5, W[a].data[v]
+        worst_ind = np.argmin(sim[knn_inds])
+        assert worst_ind < 5
         WN_inds[a,v] = worst_ind
-        WN_vals[a,v] = sim[worst_ind]
+        WN_vals[a,v] = sim[knn_inds[worst_ind]]
         assert(sim[worst_ind] > 0)
 
 '''main loop'''

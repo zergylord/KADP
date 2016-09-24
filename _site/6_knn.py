@@ -4,25 +4,22 @@ from scipy import sparse
 from scipy.spatial.distance import cdist,pdist
 from sklearn.neighbors import NearestNeighbors
 from matplotlib import pyplot as plt
-from sklearn.preprocessing import normalize as foobar
 import time
 cur_time = time.clock()
-n_samples = 2000
-starting_points = 1000
-total_steps = int(1e3)
-refresh = int(1e1)
-sample_ticks = int(1e1)
-update_ticks = int(1e1)
-softmax = False
+n_samples = 1000
+starting_points = 100
+total_steps = int(1e4)
+refresh = int(1e2)
+sample_ticks = int(1e0)
+update_ticks = int(1e0)
 change_samples = True
 use_walls = False
-use_transform = True
 test_n_samples = 100
 n_actions = 4
 rad_inc = 2*np.pi/n_actions
 radius = .25
 s_dim = 2 #assume this is fixed, since actions are rotations
-b = .01
+b = .1
 gamma = .9
 anneal = int(1e3)
 epsilon = np.linspace(1,.1,anneal)
@@ -51,57 +48,38 @@ def get_transition(s,a):
 '''
 only between singleton x and array X
 '''
-M = np.random.randn(2,64) 
-def transform(x):
-    #return np.power(x,3)
-    return np.dot(x,M)
 def kernel(x,X):
-    if use_transform:
-        x = transform(x)
-        X = transform(X)
-    k = 5
     '''Gaussian'''
-    dist = np.squeeze(cdist(np.expand_dims(x,0),X)/b)
-    if softmax:
-        sim = norm.pdf(dist)
-    else:
-        sim = norm.pdf(np.clip(dist,0,10))
-    inds = np.argpartition(dist,k-1)[:k]
-    #sim = norm.pdf(dist)
-    ''' inv dist'''
-    '''
+    k = 5
+    #sim = norm.pdf(np.squeeze(cdist(np.expand_dims(x,0),X))/b)
     dist = np.squeeze(cdist(np.expand_dims(x,0),X))
-    sim = 1/(dist+1e-10)
+    '''
+    vals,counts = np.unique(sim,return_counts=True)
+    print(x,X)
+    print(vals[0],counts[0])
+    '''
+    #inds = np.argpartition(sim,k-1)[-k:]
     inds = np.argpartition(dist,k-1)[:k]
-    '''
-    '''cosine sim'''
-    '''
-    x = np.expand_dims(x,1)
-    sim = np.squeeze(np.dot(X,x))
-    denom = (np.linalg.norm(x)*np.linalg.norm(X,axis=1))
-    sim /= denom
-    sim = np.exp(sim)
-    inds = np.argpartition(-sim,k-1)[:k]
-    '''
-    assert np.all(sim>0), sim[sim<=0]
+    #sim = np.ones((X.shape[0],))
+    sim = 1/(dist+1e-10)
+    #inds = np.arange(sim.shape[0])
+    assert(np.all(sim>0))
     return inds,sim
 
 def normalize(W):
-    if len(W.shape) == 1:
-        W = W.reshape(1,-1)
-    return foobar(W,norm='l1',axis=1)
     W = W.copy()
-    if softmax:
-        W = np.exp(W)
-    if len(W.shape) == 2:
-        W_sum = W.sum(1)
-        mask = W_sum != 0
-        W[mask] = W[mask]/np.expand_dims(W_sum[mask],1)
-    else:
-        W_sum = W.sum()
-        W = W/W_sum
+    W_sum = W.sum(1)
+    mask = W_sum != 0
+    W[mask] = W[mask]/np.expand_dims(W_sum[mask],1)
     return W
 def bellman_op(W,R,V):
+    foo = normalize(W)
+    bar = R+gamma*V
+    '''
+    for i in range(len(R)):
+        if R[i] > 0:
+            print(foo[:,i])
+            '''
     return normalize(W).dot(R+gamma*V)
 def get_reward(SPrime):
     if len(SPrime.shape) == 2:
@@ -155,29 +133,12 @@ def get_value(s):
         weights = np.zeros((samples_per_action,))
         inds,vals = kernel(s,S[a,:mem_count[a]])
         weights[inds] = vals[inds]
-        #cur_W_a = (weights / weights.sum())
-        cur_W_a = normalize(weights)
+        cur_W_a = (weights / weights.sum())
         cur_V[a] = cur_W_a.dot(R[a]+gamma*V[a])
     return cur_V.max(0)
-def get_state_pred_err(s,a,sPrime):
-    inds,vals = kernel(s,S[a,:mem_count[a]])
-    weights = np.zeros((samples_per_action,))
-    weights[inds] = vals
-    inds,vals = kernel(sPrime,SPrime[a,inds])
-    return vals.min()
-
-def get_value_grid():
-    x = np.linspace(-4,4,100)
-    y = np.linspace(4,-4,100)
-    xv, yv = np.meshgrid(x,y)
-    VG = np.zeros((100,100))
-    for xi in range(100):
-        for yi in range(100):
-            VG[xi,yi] = get_value(np.asarray([xv[xi,yi],yv[xi,yi]]))
-    return VG
 def add_tuple(t,s,a,r,sPrime):
     global WN_inds,WN_vals,creation_time,S,R,SPrime,W,V
-    #print(get_state_pred_err(s,a,sPrime))
+    #cur_V_max = get_value(s)
     if mem_count[a] == samples_per_action:
         ind = get_oldest_ind(a)
     else:
@@ -245,7 +206,6 @@ def add_tuple(t,s,a,r,sPrime):
         assert np.all(WN_inds[act,valid_inds]>-1),str(a)+str(act)
 
     #initial value
-    #V[a,ind] = get_value(sPrime)
     V[a,ind] = 0
     if debug:
         assert np.all(W_sane==W), str(np.nonzero(W_sane!=W))+str(W_old[W_sane!=W])+str(W[W_sane!=W])+str(W_sane[W_sane!=W])+' action: '+str(a)+' row: '+str(row_ind) + ' col: ' + str(ind)
@@ -259,7 +219,6 @@ def value_iteration(W):
 def viz_trajectory():
     test_S = (np.random.rand(test_n_samples,s_dim)-.5)*2*3
     #test_S = np.random.randn(test_n_samples,s_dim)
-    plt.figure(2)
     for i in range(200):
         for j in range(test_n_samples):
             a,_ = select_action(test_S[j],0.1)
@@ -292,7 +251,6 @@ def select_action(cur_S,epsilon):
 '''initialize with points > k'''
 s = (np.random.rand(s_dim)-.5)*2*3
 for i in range(starting_points):
-    s = (np.random.rand(s_dim)-.5)*2*3
     a = np.random.randint(n_actions)
     S[a,mem_count[a]] = s
     sPrime = get_transition(s,a)
@@ -339,12 +297,17 @@ for i in range(total_steps):
                 tuples.append([i,cur_s,cur_a,cur_r,cur_sPrime])
                 cur_s = cur_sPrime
             else:
+                print('yay!')
                 cumr+=cur_r
                 #add_tuple(i,cur_s,cur_a,cur_r,cur_s)
                 tuples.append([i,cur_s,cur_a,cur_r,cur_s])
                 cur_s = (np.random.rand(s_dim)-.5)*2*3
         for j in range(sample_ticks):
+            for a in range(n_actions):
+                assert(np.all(WN_inds[a,valid_inds]>-1))
             add_tuple(*tuples[j])
+            for a in range(n_actions):
+                assert np.all(WN_inds[a,valid_inds]>-1),str(cur_a)+str(a)
     for j in range(update_ticks):
         V_view[:],change = value_iteration(W)
     if display and i % refresh == 0:
@@ -355,38 +318,30 @@ for i in range(total_steps):
             epsilon = .1
             sample_ticks = int(1e2)
             update_ticks = int(1e1)
-        print(i,change,'tot r: ',cumr,creation_time.min(1),time.clock()-cur_time)
+        print(i,change,cumr,creation_time.min(1),time.clock()-cur_time)
 
         #cumr = 0
         cur_time = time.clock()
-        assert all(V_view==V.reshape(-1)) , V_view[V_view!=V.reshape(-1)]
-        plt.figure(0)
-        VG = get_value_grid()
+        assert(all(V_view==V.reshape(-1)))
         plt.clf()
-        plt.imshow(VG)
-        plt.pause(.01)
-
-        plt.figure(1)
-        plt.clf()
-        
+        #'''
         axes = plt.gca()
         axes.set_xlim([-4,4])
         axes.set_ylim([-4,4])
         plt.scatter(SPrime_view[:,0],SPrime_view[:,1],s=100*((V)),c=V)
         #plt.scatter(SPrime_view[:,0],SPrime_view[:,1],c=V)
         #plt.hexbin(SPrime_view[:,0],SPrime_view[:,1],gridsize=15,extent=(-4,4,-4,4))
+        #'''
         if interact:
             plt.pause(.01)
         else:
             plt.show()
-        
         '''
         if change < 1e-5:
             print('done',i)
             break
         '''
-viz_trajectory()
-'''
 plt.ioff()
 plt.show()
-'''
+plt.ion()
+viz_trajectory()

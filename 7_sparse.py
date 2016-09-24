@@ -2,27 +2,29 @@ import numpy as np
 from scipy.stats import norm
 from scipy import sparse
 from scipy.spatial.distance import cdist,pdist
+#from scipy.sparse import csc_matrix as sparse_matrix
+from scipy.sparse import lil_matrix as sparse_matrix
 from sklearn.neighbors import NearestNeighbors
 from matplotlib import pyplot as plt
-from sklearn.preprocessing import normalize as foobar
+from sklearn.preprocessing import normalize
 import time
 cur_time = time.clock()
 n_samples = 2000
 starting_points = 1000
-total_steps = int(1e3)
+total_steps = int(1e2)
 refresh = int(1e1)
 sample_ticks = int(1e1)
 update_ticks = int(1e1)
 softmax = False
-change_samples = True
+change_samples = False
 use_walls = False
-use_transform = True
+use_transform = False
 test_n_samples = 100
 n_actions = 4
 rad_inc = 2*np.pi/n_actions
 radius = .25
 s_dim = 2 #assume this is fixed, since actions are rotations
-b = .01
+b = .1
 gamma = .9
 anneal = int(1e3)
 epsilon = np.linspace(1,.1,anneal)
@@ -48,6 +50,17 @@ def get_transition(s,a):
         sPrime[sPrime > 4] = 4
         sPrime[sPrime < -4] = -4
     return sPrime
+def get_reward(SPrime):
+    if len(SPrime.shape) == 2:
+        return np.float32((SPrime[:,0] > 1)
+                *(SPrime[:,0] < 2)
+                *(SPrime[:,1] > -1)
+                *(SPrime[:,1] < 0))
+    else:
+        return np.float32((SPrime[0] > 1)
+                *(SPrime[0] < 2)
+                *(SPrime[1] > -1)
+                *(SPrime[1] < 0))
 '''
 only between singleton x and array X
 '''
@@ -86,34 +99,14 @@ def kernel(x,X):
     assert np.all(sim>0), sim[sim<=0]
     return inds,sim
 
-def normalize(W):
+def my_normalize(W):
     if len(W.shape) == 1:
         W = W.reshape(1,-1)
-    return foobar(W,norm='l1',axis=1)
-    W = W.copy()
-    if softmax:
-        W = np.exp(W)
-    if len(W.shape) == 2:
-        W_sum = W.sum(1)
-        mask = W_sum != 0
-        W[mask] = W[mask]/np.expand_dims(W_sum[mask],1)
-    else:
-        W_sum = W.sum()
-        W = W/W_sum
-    return W
+    return normalize(W,norm='l1',axis=1)
 def bellman_op(W,R,V):
-    return normalize(W).dot(R+gamma*V)
-def get_reward(SPrime):
-    if len(SPrime.shape) == 2:
-        return np.float32((SPrime[:,0] > 1)
-                *(SPrime[:,0] < 2)
-                *(SPrime[:,1] > -1)
-                *(SPrime[:,1] < 0))
-    else:
-        return np.float32((SPrime[0] > 1)
-                *(SPrime[0] < 2)
-                *(SPrime[1] > -1)
-                *(SPrime[1] < 0))
+    temp = my_normalize(W)
+    res = temp.dot(R+gamma*V)
+    return res
 if interact:
     plt.ion()
 samples_per_action = int(n_samples/n_actions)
@@ -131,7 +124,10 @@ S_view = S.reshape(-1,s_dim)
 R_view = R.reshape(-1)
 SPrime_view = SPrime.reshape(-1,s_dim)
 V_view = V.reshape(-1)
-W = np.zeros((n_actions,n_samples,samples_per_action))
+W = []
+for act in range(n_actions):
+    #W.append(sparse_matrix(np.zeros((n_samples,samples_per_action),dtype='float64')))
+    W.append((np.zeros((n_samples,samples_per_action))))
 
 ''' inds for view variables
 for when memories arent yet full '''
@@ -156,7 +152,7 @@ def get_value(s):
         inds,vals = kernel(s,S[a,:mem_count[a]])
         weights[inds] = vals[inds]
         #cur_W_a = (weights / weights.sum())
-        cur_W_a = normalize(weights)
+        cur_W_a = my_normalize(weights)
         cur_V[a] = cur_W_a.dot(R[a]+gamma*V[a])
     return cur_V.max(0)
 def get_state_pred_err(s,a,sPrime):
@@ -202,15 +198,15 @@ def add_tuple(t,s,a,r,sPrime):
     for act in range(n_actions):
         #replace row
         knn_inds,sim = kernel(sPrime,S[act,:mem_count[act]])
-        W[act,row_ind,:] = 0
-        W[act,row_ind,knn_inds] = sim[knn_inds]
+        W[act][row_ind,:] = 0
+        W[act][row_ind,knn_inds] = sim[knn_inds]
         worst_ind = knn_inds[np.argmin(sim[knn_inds])]
         WN_inds[act,row_ind] = worst_ind
         WN_vals[act,row_ind] = sim[worst_ind]
         assert np.all(WN_inds[act,valid_inds]>-1),str(a)+str(act)
     #----adjust columns
     #find rows relying on old memory in ind
-    conflict_inds = W[a,valid_inds,ind].nonzero()[0]
+    conflict_inds = W[a][valid_inds,ind].nonzero()[0]
     mask = valid_mask.copy()
     mask[row_ind] = 0 #don't overide a row we just added!
     if len(conflict_inds) > 0:
@@ -230,8 +226,8 @@ def add_tuple(t,s,a,r,sPrime):
     _,sim = kernel(s,SPrime_view[valid_inds])
     mask[valid_inds] = np.logical_and(mask[valid_inds],WN_vals[a,valid_inds] < sim)
     assert np.all(WN_vals[a,mask]<sim[mask[valid_inds]])
-    W[a,mask,WN_inds[a,mask]] = 0 
-    W[a,mask,ind] = sim[mask[valid_inds]] 
+    W[a][mask,WN_inds[a,mask]] = 0 
+    W[a][mask,ind] = sim[mask[valid_inds]] 
 
     emp_knn = np.count_nonzero(W[a,valid_inds])/len(valid_inds)
     assert  emp_knn == 5, emp_knn
@@ -250,7 +246,7 @@ def add_tuple(t,s,a,r,sPrime):
     if debug:
         assert np.all(W_sane==W), str(np.nonzero(W_sane!=W))+str(W_old[W_sane!=W])+str(W[W_sane!=W])+str(W_sane[W_sane!=W])+' action: '+str(a)+' row: '+str(row_ind) + ' col: ' + str(ind)
 def value_iteration(W):
-    temp_V = np.zeros(W.shape[:-1])
+    temp_V = np.zeros((n_actions,n_samples))
     for a in range(n_actions):
         temp_V[a] = bellman_op(W[a],R[a],V[a])
     new_V = temp_V.max(0)
@@ -308,21 +304,17 @@ update_valid()
 for a in range(n_actions):
     for v in valid_inds:
         knn_inds,sim = kernel(SPrime_view[v],S[a,:mem_count[a]])
-        W[a,v,knn_inds] = sim[knn_inds]
+        W[a][v,knn_inds] = sim[knn_inds]
         worst_ind = knn_inds[np.argmin(sim[knn_inds])]
         WN_inds[a,v] = worst_ind
         WN_vals[a,v] = sim[worst_ind]
         assert(sim[worst_ind] > 0)
+
 '''main loop'''
 cumr = 0
 cur_s = (np.random.rand(s_dim)-.5)*2*3
 greedy = True
 
-'''
-for j in range(100):
-    V_view[:],change = value_iteration(W)
-    print(change)
-'''
 for i in range(total_steps):
     if change_samples:
         tuples = []

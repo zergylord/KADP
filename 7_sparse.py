@@ -11,11 +11,11 @@ from sklearn.preprocessing import normalize
 import time
 cur_time = time.clock()
 n_samples = 200000
-starting_points = 1500
+starting_points = 1000
 total_steps = int(1e4)
 refresh = int(1e1)
 sample_ticks = int(1e3)
-update_ticks = int(1e1)
+update_ticks = int(1e2)
 softmax = False
 change_samples = True
 use_walls = False
@@ -108,9 +108,8 @@ time_to_norm = 0
 def bellman_op(W,R,V):
     global time_to_norm
     cur_time = time.clock()
-    temp = my_normalize(W)
     time_to_norm += (time.clock()-cur_time)
-    res = temp.dot(R+gamma*V)
+    res = W.dot(R+gamma*V)
     return res
 if interact:
     plt.ion()
@@ -177,8 +176,9 @@ def get_value_grid():
             VG[xi,yi] = get_value(np.asarray([xv[xi,yi],yv[xi,yi]]))
     return VG
 time_to_add = 0
+time_to_update_col = 0
 def add_tuple(t,s,a,r,sPrime):
-    global time_to_add,WN_inds,WN_vals,creation_time,S,R,SPrime,W,V
+    global time_to_add,time_to_update_col,WN_inds,WN_vals,creation_time,S,R,SPrime,W,V
     cur_time = time.clock()
     #print(get_state_pred_err(s,a,sPrime))
     if mem_count[a] == samples_per_action:
@@ -189,8 +189,12 @@ def add_tuple(t,s,a,r,sPrime):
     S[a,ind] = s
     R[a,ind] = r
     SPrime[a,ind] = sPrime
-    mem_count[a] = min(mem_count[a] + 1,samples_per_action)
-    update_valid()
+    if mem_count[a] < samples_per_action:
+        mem_count[a] += 1
+        update_valid()
+        can_conflict = False
+    else:
+        can_conflict = True
     row_ind = a*samples_per_action+ind
     assert(row_ind in valid_inds)
     if debug:
@@ -201,11 +205,11 @@ def add_tuple(t,s,a,r,sPrime):
             for v in valid_inds:
                 knn_inds,sim = kernel(SPrime_view[v],S[act,:mem_count[act]])
                 W_sane[act,v,knn_inds] = sim[knn_inds]
-
     for act in range(n_actions):
         #replace row
         knn_inds,sim = kernel(sPrime,S[act,:mem_count[act]])
-        W[act][row_ind,:] = 0
+        if can_conflict:
+            W[act][row_ind,:] = 0
         W[act][row_ind,knn_inds] = sim[knn_inds]
         assert len(W[act].data[row_ind]) == 5, W[act].data[row_ind]
         worst_ind = np.argmin(sim[knn_inds])
@@ -215,24 +219,27 @@ def add_tuple(t,s,a,r,sPrime):
         assert np.all(WN_inds[act,valid_inds]>-1),str(a)+str(act)
     #----adjust columns
     #find rows relying on old memory in ind
-    conflict_inds = W[a][valid_inds,ind].nonzero()[0]
+    col_time = time.clock()
     mask = valid_mask.copy()
     mask[row_ind] = 0 #don't overide a row we just added!
-    if len(conflict_inds) > 0:
-        vinds = np.asarray(valid_inds)
-        mask[vinds[conflict_inds]] = 0 #don't overide a row we just added!
-        for i in range(len(conflict_inds)):
-            v = valid_inds[conflict_inds[i]]
-            if v == row_ind:
-                continue
-            knn_inds,sim = kernel(SPrime_view[v],S[a,:mem_count[a]])
-            W[a][v,:] = 0 
-            W[a][v,knn_inds] = sim[knn_inds] 
-            assert len(W[a].data[v]) == 5, W[a].data[v]
-            worst_ind = np.argmin(sim[knn_inds])
-            WN_inds[a,v] = worst_ind
-            assert worst_ind < 5
-            WN_vals[a,v] = sim[knn_inds[worst_ind]]
+    if can_conflict:
+        #TODO: replace valid_inds with all inds, since conflict requires full buffer
+        conflict_inds = W[a][valid_inds,ind].nonzero()[0]
+        if len(conflict_inds) > 0:
+            vinds = np.asarray(valid_inds)
+            mask[vinds[conflict_inds]] = 0 #don't overide a row we just added!
+            for i in range(len(conflict_inds)):
+                v = valid_inds[conflict_inds[i]]
+                if v == row_ind:
+                    continue
+                knn_inds,sim = kernel(SPrime_view[v],S[a,:mem_count[a]])
+                W[a][v,:] = 0 
+                W[a][v,knn_inds] = sim[knn_inds] 
+                assert len(W[a].data[v]) == 5, W[a].data[v]
+                worst_ind = np.argmin(sim[knn_inds])
+                WN_inds[a,v] = worst_ind
+                assert worst_ind < 5
+                WN_vals[a,v] = sim[knn_inds[worst_ind]]
     #find rows losing a neighbor
     _,sim = kernel(s,SPrime_view[valid_inds])
     mask[valid_inds] = np.logical_and(mask[valid_inds],WN_vals[a,valid_inds] < sim)
@@ -251,7 +258,7 @@ def add_tuple(t,s,a,r,sPrime):
         assert new_worst_ind < 5, new_worst_ind
         WN_inds[a,dead_inds[i]] = new_worst_ind
         WN_vals[a,dead_inds[i]] = array_of_lists[i][new_worst_ind]
-
+    time_to_update_col += (time.clock()-col_time)
     '''
     emp_knn = np.count_nonzero(W[a,valid_inds])/len(valid_inds)
     assert  emp_knn == 5, emp_knn
@@ -273,7 +280,6 @@ def add_tuple(t,s,a,r,sPrime):
     time_to_add += (time.clock()-cur_time)
 def value_iteration(W):
     temp_V = np.zeros((n_actions,n_samples))
-    #TODO: only normalize once per VI call!
     for a in range(n_actions):
         temp_V[a] = bellman_op(W[a],R[a],V[a])
     new_V = temp_V.max(0)
@@ -366,8 +372,12 @@ for i in range(total_steps):
                 cur_s = (np.random.rand(s_dim)-.5)*2*3
         for j in range(sample_ticks):
             add_tuple(*tuples[j])
+    #TODO: only normalize once per VI call!
+    normed_W = []
+    for act in range(n_actions):
+        normed_W.append(my_normalize(W[act]))
     for j in range(update_ticks):
-        V_view[:],change = value_iteration(W)
+        V_view[:],change = value_iteration(normed_W)
     if display and i % refresh == 0:
         steps = i*sample_ticks
         if not greedy and change_samples and steps > 0*n_samples:
@@ -376,9 +386,10 @@ for i in range(total_steps):
             epsilon = .1
             sample_ticks = int(1e2)
             update_ticks = int(1e1)
-        print(i,change,'tot r: ',cumr,'num mem: ',len(valid_inds),'tot time: ',time.clock()-cur_time, 'time to norm: ',time_to_norm, 'time to add: ',time_to_add)
+        print(i,change,'tot r: ',cumr,'num mem: ',len(valid_inds),'tot time: ',time.clock()-cur_time, 'time to norm: ',time_to_norm, 'time to add: ',time_to_add,'time to col: ',time_to_update_col)
         time_to_norm = 0
         time_to_add = 0
+        time_to_update_col = 0
 
         #cumr = 0
         cur_time = time.clock()

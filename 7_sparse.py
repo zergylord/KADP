@@ -7,14 +7,14 @@ from scipy.sparse import lil_matrix as sparse_matrix
 from sklearn.neighbors import NearestNeighbors
 from matplotlib import pyplot as plt
 from sklearn.preprocessing import normalize
-import numpy_indexed as npi
+#import numpy_indexed as npi
 import time
 cur_time = time.clock()
-n_samples = 2000
-starting_points = 1000
+n_samples = 200000
+starting_points = 1500
 total_steps = int(1e4)
 refresh = int(1e1)
-sample_ticks = int(1e1)
+sample_ticks = int(1e3)
 update_ticks = int(1e1)
 softmax = False
 change_samples = True
@@ -104,8 +104,12 @@ def my_normalize(W):
     if len(W.shape) == 1:
         W = W.reshape(1,-1)
     return normalize(W,norm='l1',axis=1)
+time_to_norm = 0
 def bellman_op(W,R,V):
+    global time_to_norm
+    cur_time = time.clock()
     temp = my_normalize(W)
+    time_to_norm += (time.clock()-cur_time)
     res = temp.dot(R+gamma*V)
     return res
 if interact:
@@ -127,7 +131,7 @@ SPrime_view = SPrime.reshape(-1,s_dim)
 V_view = V.reshape(-1)
 W = []
 for act in range(n_actions):
-    W.append(sparse_matrix(np.zeros((n_samples,samples_per_action),dtype='float64')))
+    W.append(sparse_matrix((n_samples,samples_per_action),dtype='float64'))
     #W.append((np.zeros((n_samples,samples_per_action))))
 
 ''' inds for view variables
@@ -172,8 +176,10 @@ def get_value_grid():
         for yi in range(100):
             VG[xi,yi] = get_value(np.asarray([xv[xi,yi],yv[xi,yi]]))
     return VG
+time_to_add = 0
 def add_tuple(t,s,a,r,sPrime):
-    global WN_inds,WN_vals,creation_time,S,R,SPrime,W,V
+    global time_to_add,WN_inds,WN_vals,creation_time,S,R,SPrime,W,V
+    cur_time = time.clock()
     #print(get_state_pred_err(s,a,sPrime))
     if mem_count[a] == samples_per_action:
         ind = get_oldest_ind(a)
@@ -264,8 +270,10 @@ def add_tuple(t,s,a,r,sPrime):
     V[a,ind] = 0
     if debug:
         assert np.all(W_sane==W), str(np.nonzero(W_sane!=W))+str(W_old[W_sane!=W])+str(W[W_sane!=W])+str(W_sane[W_sane!=W])+' action: '+str(a)+' row: '+str(row_ind) + ' col: ' + str(ind)
+    time_to_add += (time.clock()-cur_time)
 def value_iteration(W):
     temp_V = np.zeros((n_actions,n_samples))
+    #TODO: only normalize once per VI call!
     for a in range(n_actions):
         temp_V[a] = bellman_op(W[a],R[a],V[a])
     new_V = temp_V.max(0)
@@ -368,7 +376,9 @@ for i in range(total_steps):
             epsilon = .1
             sample_ticks = int(1e2)
             update_ticks = int(1e1)
-        print(i,change,'tot r: ',cumr,creation_time.min(1),time.clock()-cur_time)
+        print(i,change,'tot r: ',cumr,'num mem: ',len(valid_inds),'tot time: ',time.clock()-cur_time, 'time to norm: ',time_to_norm, 'time to add: ',time_to_add)
+        time_to_norm = 0
+        time_to_add = 0
 
         #cumr = 0
         cur_time = time.clock()

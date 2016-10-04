@@ -12,8 +12,8 @@ import time
 cur_time = time.clock()
 n_samples = 200000
 starting_points = 1000
-total_steps = int(1e4)
-refresh = int(1e1)
+total_steps = int(1e1)
+refresh = int(1e0)
 sample_ticks = int(1e3)
 update_ticks = int(1e2)
 softmax = False
@@ -419,8 +419,8 @@ for i in range(total_steps):
             print('done',i)
             break
         '''
-viz_trajectory()
 '''
+viz_trajectory()
 plt.ioff()
 plt.show()
 '''

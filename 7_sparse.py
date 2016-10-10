@@ -11,7 +11,7 @@ from sklearn.preprocessing import normalize
 import time
 cur_time = time.clock()
 n_samples = 200000
-starting_points = 1000
+starting_points = 100
 total_steps = int(1e1)
 refresh = int(1e0)
 sample_ticks = int(1e3)
@@ -372,10 +372,10 @@ for i in range(total_steps):
                 cur_s = (np.random.rand(s_dim)-.5)*2*3
         for j in range(sample_ticks):
             add_tuple(*tuples[j])
-    #TODO: only normalize once per VI call!
     normed_W = []
     for act in range(n_actions):
         normed_W.append(my_normalize(W[act]))
+    #V[:] = 0 #this surprisingly doesn't matter much!
     for j in range(update_ticks):
         V_view[:],change = value_iteration(normed_W)
     if display and i % refresh == 0:

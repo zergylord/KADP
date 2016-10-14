@@ -319,9 +319,9 @@ def select_action(cur_S,epsilon):
 
 
 '''initialize with points > k'''
-s = (np.random.rand(s_dim)-.5)*2*3
+s = (np.random.rand(s_dim)-.5)*2*4
 for i in range(starting_points):
-    s = (np.random.rand(s_dim)-.5)*2*3
+    #s = (np.random.rand(s_dim)-.5)*2*3
     a = np.random.randint(n_actions)
     S[a,mem_count[a]] = s
     sPrime = get_transition(s,a)

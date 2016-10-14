@@ -17,28 +17,34 @@ def bellman_op(W,R,V,gamma,not_term):
 class KADP(object):
     def __init__(self,env):
         self.sample_ticks = int(1e3)
-        self.update_ticks = int(1e2)
+        self.update_ticks = int(1e3)
 
         self.n_actions = env.action_space.n
-        self.samples_per_action = 25000
+        self.samples_per_action = 100000
         self.n_samples = self.n_actions*self.samples_per_action
         
         self.s_dim = 64
-        self.k = 5
-        self.b = 1e-1
+        self.k = 15
+        self.b = 1e-2
         self.gamma = .99
-        self.num_buffer_obs = 1
+        self.num_buffer_obs = 4
         self.obs_dim = np.prod(env.observation_space.shape)
         self.obs_buffer = np.zeros((self.num_buffer_obs,self.obs_dim))
         self.obs_dim *= self.num_buffer_obs
         if self.obs_dim < self.s_dim:
             print('tiny state space, no projection.')
             self.s_dim = self.obs_dim
-            self.transform = lambda x: self.use_obs_buffer(x)
+            if self.num_buffer_obs >1:
+                self.transform = lambda x: self.use_obs_buffer(x)
+            else:
+                self.transform = lambda x: x
         else:
             print('huge state space, random projection.')
             self.M = np.random.randn(self.obs_dim,self.s_dim) 
-            self.transform = lambda x: np.dot(self.use_obs_buffer(x.flatten()),self.M)
+            if self.num_buffer_obs >1:
+                self.transform = lambda x: np.dot(self.use_obs_buffer(x.flatten()),self.M)
+            else:
+                self.transform = lambda x: np.dot(x.flatten(),self.M)
 
         self.warming = True
         self.epsilon = 1
@@ -124,7 +130,7 @@ class KADP(object):
         
         ''' don't calculate values until sufficient memories exist '''
         if self.warming:
-            print('warming up!')
+            #print('warming up!')
             ''' setup initial neighbor values'''
             if self.epsilon < 1 and np.all(self.mem_count >= self.k):
                 print('done warming up!',self.mem_count)
@@ -208,9 +214,13 @@ class KADP(object):
         for i in range(self.update_ticks):
             for a in range(self.n_actions):
                 temp_V[a] = bellman_op(normed_W[a],self.R[a],self.V[a],self.gamma,self.NT[a])
-            self.V_view[:] = temp_V.max(0)
-        change = np.abs(old_V-self.V_view).sum()
-        print('change from update: ',change)
+            new_V = temp_V.max(0)
+            change = np.abs(new_V-self.V_view).sum()
+            self.V_view[:] = new_V
+            if change < 1e-3:
+                break
+        #change = np.abs(old_V-self.V_view).sum()
+        print('change from update: ',change,i)
         return change
     def select_action(self,s):
         if np.random.rand() < self.epsilon:
@@ -231,8 +241,8 @@ class KADP(object):
                 return v_max_ind,cur_V[v_max_ind]
 
 import gym
-env = gym.make('CartPole-v0')
-#env = gym.make('Pong-v0')
+#env = gym.make('CartPole-v0') #2e3 to 0 epsilon, 15 knn
+env = gym.make('Pong-v0')
 #env = simple_env.Simple()
 agent = KADP(env)
 s = agent.transform(env.reset())
@@ -240,10 +250,12 @@ cur_time = time.clock()
 refresh = int(1e3)
 tuples = []
 cumr = 0
+episode_count = 0
 reward_per_episode = 0
+last_return = 0
 Return = 0
-anneal = int(2e3) 
-anneal_schedule = np.linspace(1,.1,anneal)
+anneal = int(1e5) 
+anneal_schedule = np.linspace(1,.005,anneal)
 for t in range(int(1e6)):
     '''
     anneal_state = t - 1000
@@ -261,13 +273,15 @@ for t in range(int(1e6)):
     sPrime = agent.transform(sPrime)
     cumr += r
     Return +=r
-    r = np.sign(r)
+    #r = np.sign(r)
     ''' add to episodic memory '''
     tuples.append([t,s,a,r,sPrime,term])
     if term:
-        print('new episode!')
+        #print('new episode!')
         s = agent.transform(env.reset())
-        reward_per_episode  = reward_per_episode*.99 + .01*Return
+        reward_per_episode  = reward_per_episode*.95 + .05*Return
+        episode_count += 1
+        last_return = Return
         Return = 0
     else:
         s = sPrime
@@ -293,6 +307,7 @@ for t in range(int(1e6)):
         print(t,
                 'time: ',time.clock()-cur_time,
                 'reward: ',reward_per_episode,
+                'episode: ',episode_count,
                 'memory state: ',agent.mem_count,
                 'epsilon: ',agent.epsilon)
         cumr = 0

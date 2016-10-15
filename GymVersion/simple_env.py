@@ -5,14 +5,18 @@ class ActionSpace(object):
         self.n = n
         self.sample = lambda: np.random.randint(n)
 class ObservationSpace(object):
-    def __init__(self,shape):
+    def __init__(self,shape,sample = None):
         self.shape = shape
+        if sample is None:
+            self.sample = lambda: np.random.randn(shape)
+        else:
+            self.sample = sample
 class Simple(object):
     radius = .25
-    observation_space = ObservationSpace(2)
     @staticmethod
     def _new_state():
         return (np.random.rand(2)-.5)*2*4
+    observation_space = ObservationSpace(2,lambda: Simple._new_state())
     @staticmethod
     def get_reward(SPrime):
         term = ((SPrime[0] > 1)
@@ -28,12 +32,15 @@ class Simple(object):
     def reset(self):
         self.s = self._new_state()
         return self.s
-    def step(self,a):    
-        sPrime =  self.s + np.asarray([self.radius*np.cos(self.rad_inc*a),self.radius*np.sin(self.rad_inc*a)])
+    def get transition(self,s,a):
+        sPrime =  s + np.asarray([self.radius*np.cos(self.rad_inc*a),self.radius*np.sin(self.rad_inc*a)])
         sPrime += np.random.randn(2)*self.radius
         #sPrime += np.random.randn(2)*self.radius
         sPrime[sPrime > 4] = 4
         sPrime[sPrime < -4] = -4
-        self.s = sPrime
         r,term = self.get_reward(sPrime)
+        return sPrime,r,term
+    def step(self,a):    
+        sPrime,r,term = self.get_transition(self.s,a)
+        self.s = sPrime
         return sPrime,r,term,False

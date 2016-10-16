@@ -7,7 +7,9 @@ from scipy.spatial.distance import cdist,pdist
 from scipy.sparse import lil_matrix as sparse_matrix
 from sklearn.preprocessing import normalize
 import simple_env
-
+from scipy.misc import imresize
+def rgb2gray(rgb):
+    return np.dot(rgb[..., :3], [0.299, 0.587, 0.114])
 def my_normalize(W):
     if len(W.shape) == 1:
         W = W.reshape(1,-1)
@@ -15,6 +17,14 @@ def my_normalize(W):
 def bellman_op(W,R,V,gamma,not_term):
     return W.dot(R+not_term*gamma*V)
 class KADP(object):
+    def transform(self,obs):
+        if self.image_based:
+            obs = imresize(rgb2gray(obs),[84,84]).flatten()/255.0
+        if self.num_buffer_obs > 1:
+            obs = self.use_obs_buffer(obs)
+        if self.random_projection:
+            obs = np.dot(obs,self.M)
+        return obs
     def __init__(self,env):
         self.sample_ticks = int(1e3)
         self.update_ticks = int(1e3)
@@ -25,27 +35,26 @@ class KADP(object):
         
         self.s_dim = 64
         self.k = 15
-        self.b = 1e-2
+        self.b = 1e2
         self.gamma = .99
         self.num_buffer_obs = 4
-        self.obs_dim = np.prod(env.observation_space.shape)
+        if len(env.observation_space.shape) == 3:
+            print('RGB image detected!')
+            self.image_based = True
+            self.obs_dim = 84*84
+        else:
+            self.image_based = False
+            self.obs_dim = np.prod(env.observation_space.shape)
         self.obs_buffer = np.zeros((self.num_buffer_obs,self.obs_dim))
         self.obs_dim *= self.num_buffer_obs
         if self.obs_dim < self.s_dim:
             print('tiny state space, no projection.')
             self.s_dim = self.obs_dim
-            if self.num_buffer_obs >1:
-                self.transform = lambda x: self.use_obs_buffer(x)
-            else:
-                self.transform = lambda x: x
+            self.random_projection = False
         else:
             print('huge state space, random projection.')
+            self.random_projection = True
             self.M = np.random.randn(self.obs_dim,self.s_dim) 
-            if self.num_buffer_obs >1:
-                self.transform = lambda x: np.dot(self.use_obs_buffer(x.flatten()),self.M)
-            else:
-                self.transform = lambda x: np.dot(x.flatten(),self.M)
-
         self.warming = True
         self.epsilon = 1
         ''' storage vars'''
@@ -92,7 +101,7 @@ class KADP(object):
     def kernel(self,x,X):
         '''Gaussian'''
         dist = np.squeeze(cdist(np.expand_dims(x,0),X)/self.b)
-        sim = norm.pdf(np.clip(dist,0,10))
+        sim = np.exp(-(np.clip(dist,0,10)))
         inds = np.argpartition(dist,self.k-1)[:self.k]
         assert np.all(sim>0), sim[sim<=0]
         return inds,sim
@@ -247,16 +256,17 @@ env = gym.make('Pong-v0')
 agent = KADP(env)
 s = agent.transform(env.reset())
 cur_time = time.clock()
+total_steps = int(1e6)
 refresh = int(1e3)
 tuples = []
 cumr = 0
 episode_count = 0
-reward_per_episode = 0
+reward_per_episode = -1
 last_return = 0
 Return = 0
 anneal = int(1e5) 
 anneal_schedule = np.linspace(1,.005,anneal)
-for t in range(int(1e6)):
+for t in range(total_steps):
     '''
     anneal_state = t - 1000
     stop_anneal = int(1e5)
@@ -274,6 +284,8 @@ for t in range(int(1e6)):
     cumr += r
     Return +=r
     #r = np.sign(r)
+    if r != 0:
+        term = True
     ''' add to episodic memory '''
     tuples.append([t,s,a,r,sPrime,term])
     if term:

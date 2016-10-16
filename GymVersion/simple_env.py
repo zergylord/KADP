@@ -32,7 +32,7 @@ class Simple(object):
     def reset(self):
         self.s = self._new_state()
         return self.s
-    def get transition(self,s,a):
+    def get_transition(self,s,a):
         sPrime =  s + np.asarray([self.radius*np.cos(self.rad_inc*a),self.radius*np.sin(self.rad_inc*a)])
         sPrime += np.random.randn(2)*self.radius
         #sPrime += np.random.randn(2)*self.radius

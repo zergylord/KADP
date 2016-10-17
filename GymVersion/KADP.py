@@ -6,7 +6,6 @@ from scipy.stats import norm
 from scipy.spatial.distance import cdist,pdist
 from scipy.sparse import lil_matrix as sparse_matrix
 from sklearn.preprocessing import normalize
-import simple_env
 from scipy.misc import imresize
 def rgb2gray(rgb):
     return np.dot(rgb[..., :3], [0.299, 0.587, 0.114])
@@ -25,7 +24,7 @@ class KADP(object):
         if self.random_projection:
             obs = np.dot(obs,self.M)
         return obs
-    def __init__(self,env):
+    def __init__(self,env,s_dim = 64, k = 15,b = 1e-1, gamma = .99, n_buffer_obs = 4):
         self.sample_ticks = int(1e3)
         self.update_ticks = int(1e3)
 
@@ -33,12 +32,12 @@ class KADP(object):
         self.samples_per_action = 100000
         self.n_samples = self.n_actions*self.samples_per_action
         
-        self.s_dim = 64
-        self.k = 15
-        self.b = 1e2
-        self.gamma = .99
-        self.num_buffer_obs = 4
-        if len(env.observation_space.shape) == 3:
+        self.s_dim = s_dim
+        self.k = k
+        self.b = b
+        self.gamma = gamma
+        self.num_buffer_obs = n_buffer_obs
+        if not isinstance(env.observation_space.shape,int) and len(env.observation_space.shape) == 3:
             print('RGB image detected!')
             self.image_based = True
             self.obs_dim = 84*84
@@ -98,11 +97,13 @@ class KADP(object):
         self.valid_mask[inds] = 1
 
     '''returns inds and similarity of knn between a single state and an array of states'''
+    avg_sim = 0.0
     def kernel(self,x,X):
         '''Gaussian'''
         dist = np.squeeze(cdist(np.expand_dims(x,0),X)/self.b)
         sim = np.exp(-(np.clip(dist,0,10)))
         inds = np.argpartition(dist,self.k-1)[:self.k]
+        self.avg_sim = self.avg_sim*.99+sim.sum()*.01
         assert np.all(sim>0), sim[sim<=0]
         return inds,sim
 
@@ -249,81 +250,6 @@ class KADP(object):
                 v_max_ind = np.squeeze(cur_V.argmax(0))
                 return v_max_ind,cur_V[v_max_ind]
 
-import gym
-#env = gym.make('CartPole-v0') #2e3 to 0 epsilon, 15 knn
-env = gym.make('Pong-v0')
-#env = simple_env.Simple()
-agent = KADP(env)
-s = agent.transform(env.reset())
-cur_time = time.clock()
-total_steps = int(1e6)
-refresh = int(1e3)
-tuples = []
-cumr = 0
-episode_count = 0
-reward_per_episode = -1
-last_return = 0
-Return = 0
-anneal = int(1e5) 
-anneal_schedule = np.linspace(1,.005,anneal)
-for t in range(total_steps):
-    '''
-    anneal_state = t - 1000
-    stop_anneal = int(1e5)
-    agent.epsilon = min(1,max(.005,1-anneal_state/stop_anneal))
-    '''
-    agent.epsilon = anneal_schedule[min(t,anneal-1)]
-    ''' select action'''
-    if not agent.warming:
-        a,val = agent.select_action(s)
-    else:
-        a = env.action_space.sample()
-    ''' perform action, see result'''
-    sPrime,r,term,_ = env.step(a)
-    sPrime = agent.transform(sPrime)
-    cumr += r
-    Return +=r
-    #r = np.sign(r)
-    if r != 0:
-        term = True
-    ''' add to episodic memory '''
-    tuples.append([t,s,a,r,sPrime,term])
-    if term:
-        #print('new episode!')
-        s = agent.transform(env.reset())
-        reward_per_episode  = reward_per_episode*.95 + .05*Return
-        episode_count += 1
-        last_return = Return
-        Return = 0
-    else:
-        s = sPrime
-    ''' update value function '''
-    if t % agent.sample_ticks == 0:
-        for i in range(len(tuples)):
-            agent.add_tuple(*tuples[i])
-        tuples = []
-        if not agent.warming:
-            agent.value_iteration()
-
-    if t % refresh == 0:
-        '''
-        plt.figure(1)
-        plt.clf()
-        axes = plt.gca()
-        axes.set_xlim([-4,4])
-        axes.set_ylim([-4,4])
-        #plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1])
-        plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1],s=np.log(agent.V_view+1)*100,c=np.log(agent.V_view))
-        plt.pause(.01)
-        '''
-        print(t,
-                'time: ',time.clock()-cur_time,
-                'reward: ',reward_per_episode,
-                'episode: ',episode_count,
-                'memory state: ',agent.mem_count,
-                'epsilon: ',agent.epsilon)
-        cumr = 0
-        cur_time = time.clock()
 
 
 

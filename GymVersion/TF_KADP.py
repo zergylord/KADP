@@ -16,6 +16,13 @@ class KADP(object):
         self.avg_sim = self.avg_sim*.99+sim.sum()*.01
         assert np.all(sim>0), sim[sim<=0]
         return inds,sim
+    def tf_kernel(self,x,X):
+        dist = tf.square(x-X)
+        sim = tf.exp(-tf.clip(dist,0,10))
+        k_sim,k_inds = tf.nn.top_k(sim,k=self.k,sorted=False)
+        return k_sim,k_inds
+    def tf_get_value(self,s):
+        
     ''' calc current value of single state s '''
     def get_value(self,s):
         cur_V = np.zeros((self.n_actions,))

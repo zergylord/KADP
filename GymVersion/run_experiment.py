@@ -1,10 +1,9 @@
 import time
-import gym_ple
-import gym
 import numpy as np
 from KADP import KADP
 import sys
 import simple_env
+from matplotlib import pyplot as plt
 if len(sys.argv) < 2:
     print('defaulting to simple environment!')
     env = simple_env.Simple()
@@ -12,11 +11,14 @@ if len(sys.argv) < 2:
     anneal = int(1e3) 
     anneal_schedule = np.linspace(1,.005,anneal)
 elif sys.argv[1] == 'Catch':
+    import gym_ple
+    import gym
     env = gym.make('Catcher-v0')
     agent = KADP(env,b=1e0)
     anneal = int(1e5) 
     anneal_schedule = np.linspace(1,.005,anneal)
 elif sys.argv[1] == 'Pong':
+    import gym
     env = gym.make('Pong-v0')
     agent = KADP(env,b=1e0)
     anneal = int(1e5) 
@@ -40,6 +42,10 @@ for t in range(total_steps):
     agent.epsilon = min(1,max(.005,1-anneal_state/stop_anneal))
     '''
     agent.epsilon = anneal_schedule[min(t,anneal-1)]
+    ''' random sampling mode
+    s = agent.transform(env.reset())
+    agent.epsilon = .99
+    '''
     ''' select action'''
     if not agent.warming:
         a,val = agent.select_action(s)
@@ -75,16 +81,15 @@ for t in range(total_steps):
             agent.value_iteration()
 
     if t % refresh == 0:
-        '''
-        plt.figure(1)
-        plt.clf()
-        axes = plt.gca()
-        axes.set_xlim([-4,4])
-        axes.set_ylim([-4,4])
-        #plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1])
-        plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1],s=np.log(agent.V_view+1)*100,c=np.log(agent.V_view))
-        plt.pause(.01)
-        '''
+        if len(sys.argv) < 2:
+            plt.figure(1)
+            plt.clf()
+            axes = plt.gca()
+            axes.set_xlim([-4,4])
+            axes.set_ylim([-4,4])
+            #plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1])
+            plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1],s=np.log(agent.V_view+1)*100,c=np.log(agent.V_view))
+            plt.pause(.01)
         print(t,
                 'time: ',time.clock()-cur_time,
                 'reward: ',reward_per_episode,

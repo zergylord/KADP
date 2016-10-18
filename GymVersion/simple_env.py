@@ -23,8 +23,8 @@ class Simple(object):
                  *(SPrime[0] < 2)
                  *(SPrime[1] > -1)
                  *(SPrime[1] < 0))
-        #return np.float32(term),term
-        return -1,term
+        return np.float32(term),term
+        #return -1,term
     def __init__(self,n_actions = 4):
         self.reset()
         self.rad_inc = 2*np.pi/n_actions

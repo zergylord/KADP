@@ -10,16 +10,28 @@ class KADP(object):
     #TODO:make kernel and get_value all tf
     def kernel(self,x,X):
         '''Gaussian'''
+        '''
         dist = np.squeeze(cdist(np.expand_dims(x,0),X)/self.b)
         sim = np.exp(-(np.clip(dist,0,10)))
         inds = np.argpartition(dist,self.k-1)[:self.k]
         self.avg_sim = self.avg_sim*.99+sim.sum()*.01
         assert np.all(sim>0), sim[sim<=0]
-        return inds,sim
+        '''
+        '''dot product'''
+        sim = (np.sum((X*x),-1)/np.linalg.norm(X,axis=-1))
+        inds = np.argpartition(-sim,self.k-1)[:self.k]
+
+        return inds,sim.astype(np.float32())
     def tf_kernel(self,x,X):
+        '''Gaussian'''
+        '''
         dist = tf.sqrt(tf.reduce_sum(tf.square(x-X),-1))
         sim = tf.exp(-tf.clip_by_value(dist,0,10))
+        '''
+        '''dot-product'''
+        sim = tf.squeeze(tf.reduce_sum(X*x,-1))
         k_sim,k_inds = tf.nn.top_k(sim,k=self.k,sorted=False)
+
         return k_sim,k_inds
     def tf_get_value(self,s):
         weights,inds = self.tf_kernel(s,self.S)
@@ -53,16 +65,16 @@ class KADP(object):
         self.row_offsets = np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1) 
         
         self.s_dim = 2
-        self.k = 5
+        self.k = 100
         self.b = 1e1
         self.gamma = .9
         '''create dataset'''
-        self.S = np.zeros((self.n_actions,self.samples_per_action,self.s_dim))
-        self.SPrime = np.zeros((self.n_actions,self.samples_per_action,self.s_dim))
+        self.S = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
+        self.SPrime = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
         self.SPrime_view = self.SPrime.reshape(-1,self.s_dim)
-        self.R = np.zeros((self.n_actions,self.samples_per_action))
+        self.R = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
         self.R_view = self.R.reshape(-1)
-        self.NT = np.zeros((self.n_actions,self.samples_per_action))
+        self.NT = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
         self.NT_view = self.NT.reshape(-1)
         ''' these should be tensors
         self.V = np.zeros((self.n_actions,self.samples_per_action))
@@ -75,28 +87,28 @@ class KADP(object):
                 self.S[a,i] = s
                 self.SPrime[a,i] = sPrime
                 self.R[a,i] = r
-                self.NT[a,i] = np.float64(not term)
+                self.NT[a,i] = np.float32(not term)
         ''' create similarity sparse matrix'''
         if W_and_NNI == None:
-            self.W = np.zeros((self.n_actions,self.n_samples,self.k))
+            temp_W = np.zeros((self.n_actions,self.n_samples,self.k)).astype(np.float32())
             self.NNI = np.zeros((self.n_actions,self.n_samples,self.k)).astype(np.int)
             for i in range(self.n_samples):
                 for a in range(self.n_actions):
                     inds,sim = self.kernel(self.SPrime_view[i],self.S[a])
-                    self.W[a,i,:] = sim[inds]
+                    temp_W[a,i,:] = sim[inds]
                     row_inds = a*self.samples_per_action+inds
                     self.NNI[a,i,:] = row_inds
         else:
-            self.W,self.NNI = W_and_NNI
+            temp_W,self.NNI = W_and_NNI
         '''create computation graph'''
-        tf_W = tf.Variable(self.W)
-        normed_W = tf.nn.softmax(tf_W)
-        V = [tf.zeros((self.n_samples,),dtype=tf.float64)]
+        self.tf_W = tf.Variable(temp_W)
+        normed_W = tf.nn.softmax(self.tf_W)
+        V = [tf.zeros((self.n_samples,),dtype=tf.float32)]
         self.cur_V = V[-1]
         inds = self.NNI
         R_ = tf.gather(self.R_view,inds)
         NT_ = tf.gather(self.NT_view,inds)
-        for t in range(100):
+        for t in range(10):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self.gamma*V_),-1)
             V.append(tf.reduce_max(q_vals,0))
@@ -104,15 +116,16 @@ class KADP(object):
             foo,_ = self.tf_get_value(self.SPrime_view[0])
             tf.Assert(foo == V[-1][0],[foo,V[-1][0]])
         '''NOTE: This TD error is incorrect for exploratory actions'''
-        self._s = tf.placeholder(tf.float64,shape=(self.s_dim,))
-        self._r = tf.placeholder(tf.float64,shape=(1,))
-        self._sPrime = tf.placeholder(tf.float64,shape=(self.s_dim,))
+        self._s = tf.placeholder(tf.float32,shape=(self.s_dim,))
+        self._r = tf.placeholder(tf.float32,shape=(1,))
+        self._sPrime = tf.placeholder(tf.float32,shape=(self.s_dim,))
+        self._nt = tf.placeholder(tf.float32,shape=(1,))
         init_value,_ = self.tf_get_value(self._s)
         final_value,_ = self.tf_get_value(self._sPrime)
-        target = tf.stop_gradient(self._r + self.gamma*final_value)
+        target = tf.stop_gradient(self._r + self._nt*self.gamma*final_value)
         self.loss = tf.reduce_sum(tf.square(target-init_value))
-        self.get_grads = tf.gradients(self.loss,tf_W)
-        self.train_step = tf.train.AdamOptimizer().minimize(self.loss)
+        self.get_grads = tf.gradients(self.loss,self.tf_W)
+        self.train_step = tf.train.GradientDescentOptimizer(1e-3).minimize(self.loss)
 env = simple_env.Simple()
 agent = KADP(env)
 sess = tf.Session()
@@ -121,8 +134,10 @@ cur_time = time.clock()
 epsilon = .1
 
 cumloss = 0
-for i in range(100):
-    s = env.observation_space.sample()
+cumgrads = 0
+refresh = int(1e2)
+for i in range(1000):
+    s = env.observation_space.sample().astype(np.float32())
     '''
     if np.random.rand() < epsilon:
         a = env.action_space.sample()
@@ -131,12 +146,20 @@ for i in range(100):
     _,a = agent.tf_get_value(s)
     a = sess.run(a)
     sPrime,r,term = env.get_transition(s,a)
-    _,values,grads,cur_loss = sess.run([agent.train_step,agent.cur_V,agent.get_grads,agent.loss],feed_dict={agent._s:s,agent._sPrime:sPrime,agent._r:[r]})
+    #W = sess.run(agent.tf_W)
+    _,values,cur_grads,cur_loss = sess.run([agent.train_step,agent.cur_V,agent.get_grads,agent.loss],
+            feed_dict={agent._s:s,agent._sPrime:sPrime,agent._r:[r],agent._nt:[np.float32(not term)]})
+    cumgrads += np.abs(np.asarray(cur_grads)).sum()
+    '''
+    new_W = sess.run(agent.tf_W)
+    print(np.linalg.norm((new_W-W).flatten(),1))
+    '''
     cumloss += cur_loss
-    if i % 10 == 0:
-        print('iter: ', i,'loss: ',cumloss,'grads: ',np.abs(np.asarray(grads)).sum(),'time: ',time.clock()-cur_time)
+    if i % refresh == 0:
+        print('iter: ', i,'loss: ',cumloss,'grads: ',cumgrads,'time: ',time.clock()-cur_time)
         cur_time = time.clock()
         cumloss = 0
+        cumgrads = 0
 
     plt.figure(1)
     plt.clf()
@@ -144,10 +167,5 @@ for i in range(100):
     axes.set_xlim([-4,4])
     axes.set_ylim([-4,4])
     plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1],s=np.log(values+1)*100,c=np.log(values))
-    '''
-    plt.figure(2)
-    plt.clf()
-    grads = grads[0].flatten()
-    plt.hist(grads[grads!=0])
-    '''
     plt.pause(.01)
+

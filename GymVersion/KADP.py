@@ -103,8 +103,15 @@ class KADP(object):
         dist = np.squeeze(cdist(np.expand_dims(x,0),X)/self.b)
         sim = np.exp(-(np.clip(dist,0,10)))
         inds = np.argpartition(dist,self.k-1)[:self.k]
-        self.avg_sim = self.avg_sim*.99+sim.sum()*.01
         assert np.all(sim>0), sim[sim<=0]
+        '''dot product'''
+        '''
+        sim = np.exp(np.sum((X*x),-1)/np.linalg.norm(X,axis=-1))
+        inds = np.argpartition(-sim,self.k-1)[:self.k]
+        '''
+        
+
+        self.avg_sim = self.avg_sim*.99+sim.sum()*.01
         return inds,sim
 
     '''for a given action, return next ind to be deleted'''

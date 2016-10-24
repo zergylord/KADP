@@ -9,7 +9,7 @@ if len(sys.argv) < 2:
     env = simple_env.Simple()
     agent = KADP(env,n_buffer_obs = 1)
     anneal = int(1e3) 
-    anneal_schedule = np.linspace(1,.005,anneal)
+    anneal_schedule = np.linspace(1,.99,anneal)
 elif sys.argv[1] == 'Catch':
     import gym_ple
     import gym

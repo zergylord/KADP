@@ -12,6 +12,15 @@ from ops import *
 from matplotlib import pyplot as plt
 plt.ion()
 from scipy.spatial.distance import cdist,pdist
+def get_shape_info(x):
+    if x.__class__ == tf.Tensor:
+        shape = tf.shape(x)
+        rank = len(x.get_shape())
+    else:
+        shape = x.shape
+        rank = len(shape)
+    return shape,rank
+
 class KADP(object):
     def make_network(self,inp,scope='network',tied=False):
         with tf.variable_scope(scope,reuse=tied):
@@ -19,32 +28,59 @@ class KADP(object):
             #hid = linear(hid,self.hid_dim,'hid2',tf.nn.relu)
             last_hid = linear(hid,self.s_dim,'hid3')
         return last_hid
-    def kernel(self,x,X):
+    def embed(self,x):
         if not self.net_exists:
             print('new network!')
-            x = self.make_network(x)
+            tie = False
             self.net_exists = True
         else:
-            x = self.make_network(x,tied=True)
-        if len(X.shape) > 2:
-            true_shape = X.shape
-            X = self.make_network(tf.reshape(X,[-1,self.s_dim]),tied=True)
-            X = tf.reshape(X,true_shape)
+            tie = True
+        shape,rank = get_shape_info(x)
+        if rank == 1:
+            s = self.make_network(tf.expand_dims(x,0),tied=tie)
+        elif rank == 2:
+            s = self.make_network(x,tied=tie)
+        elif rank == 3:
+            s = self.make_network(tf.reshape(x,[-1,self.s_dim]),tied=tie)
+            s = tf.reshape(s,shape)
         else:
-            X = self.make_network(X,tied=True)
-        #2x2 4x100x2
+            print('this shouldnt happen...')
+        return s
+
+    def kernel(self,x1,x2,k=None):
+        if k == None:
+            k = self.k
+        x1 = self.embed(x1)
+        x2 = self.embed(x2)
+        shape1,rank1 = get_shape_info(x1)
+        shape2,rank2 = get_shape_info(x2)
+        if rank2 == rank2 and rank2 == 3:
+            print('poop')
+            ''' compare all combination'''
+            x1 = tf.expand_dims(x1,1)
+            x2 = tf.expand_dims(x2,2)
+        else:
+            '''reshape to (n_actions,mb_dim,samples_per_action,s_dim)'''
+            if rank1 == 2:
+                x1 = tf.expand_dims(tf.expand_dims(x1,1),0)
+            else:
+                print('this shouldnt happen...')
+            '''either (n_samples,s_dim), or (a_dim,samples_per_action,s_dim)'''
+            if rank2 == 2:
+                x2 = tf.expand_dims(tf.expand_dims(x2,0),0)
+            elif rank2 == 3:
+                x2 = tf.expand_dims(x2,1)
+            else:
+                print('this shouldnt happen...')
         '''Gaussian'''
         '''
-        dist = tf.sqrt(tf.reduce_sum(tf.square(x-X),-1))
+        dist = tf.sqrt(tf.reduce_sum(tf.square(x1-x2),-1))
         sim = tf.exp(-tf.clip_by_value(dist,0,10))
         '''
         '''dot-product'''
-        '''reshape to (n_actions,mb_dim,samples_per_action,s_dim)'''
-        x = tf.expand_dims(tf.expand_dims(x,1),0)
-        X = tf.expand_dims(X,1)
-        inv_mag = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(X),-1,keep_dims=True),eps,float("inf")))
-        sim = tf.squeeze(tf.reduce_sum(X*x,-1,keep_dims=True)*inv_mag)
-        k_sim,k_inds = tf.nn.top_k(sim,k=self.k,sorted=False)
+        inv_mag = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(x2),-1,keep_dims=True),eps,float("inf")))
+        sim = tf.squeeze(tf.reduce_sum(x2*x1,-1,keep_dims=True)*inv_mag)
+        k_sim,k_inds = tf.nn.top_k(sim,k=k,sorted=False)
 
         return k_sim,k_inds
     def _get_value(self,inp):
@@ -74,12 +110,13 @@ class KADP(object):
         self.k = 100
         self.b = 1e1
         self.hid_dim = 64
-        self.lr = 1e-4
+        self.lr = 1e-2
         self.softmax = True
         self.change_actions = False
         self.gamma = .9
         '''create dataset'''
         self.S = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
+        self.S_view = self.S.reshape(-1,self.s_dim)
         self.SPrime = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
         self.SPrime_view = self.SPrime.reshape(-1,self.s_dim)
         self.R = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
@@ -121,6 +158,7 @@ class KADP(object):
             self.cur_V = V[-1]
         ''' all placeholders'''
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
+        self._a = tf.placeholder(tf.int32,shape=(None,))
         self._r = tf.placeholder(tf.float32,shape=(None,1,))
         self._sPrime = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
         self._nt = tf.placeholder(tf.float32,shape=(None,1,))
@@ -143,17 +181,41 @@ class KADP(object):
         '''
         self.val,self.action = self._get_value(self._s)
         '''reward and statePred training graph
-            feed: _s,_r,_sPrime,_nt
+            feed: _s,_a,_r,_sPrime,_nt
+            ops: train_supervised
         '''
-        weights,inds = self.kernel(self._s,self.S)
+        ''' this ignored actions...
+
+        weights,_ = self.kernel(self._s,self.S_view,k=self.n_samples)
         normed_weights = tf.nn.softmax(weights)
-        row_inds = self.row_offsets+inds
+        print(normed_weights.get_shape(),self.R_view.shape)
+        r = tf.squeeze(tf.matmul(normed_weights,np.expand_dims(self.R_view,1)),[1])
+        W_view,_ = self.kernel(self.SPrime_view,self.S_view,k=self.n_samples)
+        next_weights = tf.matmul(normed_weights,W_view)
+        #next_weights = tf.matmul(normed_weights,tf.reshape(self.W,[self.n_samples,self.n_samples])) #is this reshaping properly? no.
+        target_s,_ = self.kernel(self._sPrime,self.S_view,k=self.n_samples)
+        '''
+        gathered_S = tf.gather(self.S,self._a)
+        gathered_SPrime = tf.gather(self.SPrime,self._a)
+        gathered_R = tf.gather(self.R,self._a)
+        weights,_ = self.kernel(self._s,gathered_S)
+        normed_weights = tf.nn.softmax(weights)
+        r = tf.reduce_sum(normed_weights*gathered_R,1)
+        action_W,_ = self.kernel(gathered_S,gathered_SPrime)
+        action_W = tf.Print(action_W,[tf.shape(action_W),tf.shape(normed_weights)],'meowmeow')
+        next_weights = tf.squeeze(tf.batch_matmul(tf.expand_dims(normed_weights,1),action_W))
+        target_s,_ = self.kernel(self._sPrime,gathered_S)
+
+        self.s_loss = tf.reduce_mean(tf.reduce_sum(self._nt*tf.square(target_s-next_weights),1))
+        self.r_loss = tf.reduce_mean(tf.reduce_sum(tf.square(self._r-r),1))/10
+        self.super_loss = self.s_loss + self.r_loss
+        self.train_supervised = tf.train.AdamOptimizer(self.lr).minimize(self.super_loss)
+        '''
         next_weights = tf.gather(self.W[0],row_inds)
         next_inds = tf.gather(self.NNI[0],row_inds)
+        '''
         #TODO: scatter weights to full length vector
         #TODO: concatenate across all possible actions
-        pred_sPrime_sim = tf.reduce_sum(tf.expand_dims(normed_weights,1)*tf.gather(self.W,inds),0)
-        target,ind = self.kernel(
 env = simple_env.Simple()
 agent = KADP(env)
 sess.run(tf.initialize_all_variables())
@@ -164,14 +226,15 @@ cumloss = 0
 cumgrads = 0
 num_steps = int(1e6)
 refresh = int(1e3)
-mb_cond = 1
-mb_dim = 100
+mb_cond = 0
+mb_dim = 900
 mb_s = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
+mb_a = np.zeros((mb_dim,),dtype=np.int32)
 mb_sPrime = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
 mb_r = np.zeros((mb_dim,1),dtype=np.float32)
 mb_nt = np.zeros((mb_dim,1),dtype=np.float32)
 #a = env.action_space.sample()
-def get_mb(cond,mb_s,mb_sPrime,mb_r,mb_nt):
+def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
     if cond == 0:
         x = np.linspace(-4,4,30)
         y = np.linspace(4,-4,30)
@@ -182,29 +245,29 @@ def get_mb(cond,mb_s,mb_sPrime,mb_r,mb_nt):
                 mb_s[count,:] = np.asarray([xv[xi,yi],yv[xi,yi]])
                 count +=1
 
-        a = sess.run(agent.action,feed_dict={agent._s:mb_s})
+        mb_a = sess.run(agent.action,feed_dict={agent._s:mb_s})
         for j in range(mb_dim):
-            sPrime,r,term = env.get_transition(mb_s[j],a[j])
+            sPrime,r,term = env.get_transition(mb_s[j],mb_a[j])
             mb_sPrime[j,:] = sPrime
             mb_r[j] = r
             mb_nt[j] = not term
     elif cond == 1:
         for j in range(mb_dim):
             mb_s[j,:] = env.observation_space.sample().astype(np.float32)
-        a = sess.run(agent.action,feed_dict={agent._s:mb_s})
+        mb_a = sess.run(agent.action,feed_dict={agent._s:mb_s})
         for j in range(mb_dim):
-            sPrime,r,term = env.get_transition(mb_s[j],a[j])
+            sPrime,r,term = env.get_transition(mb_s[j],mb_a[j])
             mb_sPrime[j,:] = sPrime
             mb_r[j] = r
             mb_nt[j] = not term
-get_mb(mb_cond,mb_s,mb_sPrime,mb_r,mb_nt)
+get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
 for i in range(num_steps):
-    _,values,mb_values,cur_grads,cur_loss = sess.run([agent.train_step,agent.cur_V,agent.init_value,agent.get_grads,agent.loss],
-            feed_dict={agent._s:mb_s,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
+    _,values,mb_values,cur_grads,cur_loss = sess.run([agent.train_supervised,agent.cur_V,agent.init_value,agent.get_grads,agent.super_loss],
+            feed_dict={agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
     cumgrads += np.abs(np.asarray(cur_grads)).sum()
     cumloss += cur_loss
     if i % refresh == 0:
-        print('iter: ', i,'loss: ',cumloss,'grads: ',cumgrads,'time: ',time.clock()-cur_time)
+        print('iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
         cur_time = time.clock()
         cumloss = 0
         cumgrads = 0

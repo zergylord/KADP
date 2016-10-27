@@ -47,8 +47,8 @@ class KADP(object):
         k_sim,k_inds = tf.nn.top_k(sim,k=self.k,sorted=False)
 
         return k_sim,k_inds
-    def get_value(self,s):
-        weights,inds = self.kernel(s,self.S)
+    def _get_value(self,inp):
+        weights,inds = self.kernel(inp,self.S)
         normed_weights = tf.nn.softmax(weights)
         row_inds = self.row_offsets+inds
         R_ = tf.gather(self.R_view,row_inds)
@@ -61,6 +61,7 @@ class KADP(object):
             val = tf.reduce_max(q_vals,0)
         action = tf.argmax(q_vals,0) #this is wasteful!
         return val,action
+
     def __init__(self,env,W_and_NNI = None):
         self.net_exists = False
         self.n_actions = env.action_space.n
@@ -70,12 +71,12 @@ class KADP(object):
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = 2
-        self.k = 90
+        self.k = 100
         self.b = 1e1
-        self.hid_dim = 128
+        self.hid_dim = 64
         self.lr = 1e-4
         self.softmax = True
-        self.change_actions = True
+        self.change_actions = False
         self.gamma = .9
         '''create dataset'''
         self.S = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
@@ -118,23 +119,41 @@ class KADP(object):
             else:
                 V.append(tf.reduce_max(q_vals,0))
             self.cur_V = V[-1]
-            '''
-            foo,_ = self.get_value(self.SPrime_view[0])
-            tf.Assert(foo == V[-1][0],[foo,V[-1][0]])
-            '''
-        '''NOTE: This TD error is incorrect for exploratory actions'''
+        ''' all placeholders'''
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
         self._r = tf.placeholder(tf.float32,shape=(None,1,))
         self._sPrime = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
         self._nt = tf.placeholder(tf.float32,shape=(None,1,))
-        self.init_value,_ = self.get_value(self._s)
-        self.final_value,_ = self.get_value(self._sPrime)
+        '''TD graph
+            feed: _s,_r,_sPrime,_nt,init_value,final_value
+            ops: train_step,get_grads,loss
+            NOTE: This TD error is incorrect for exploratory actions
+        '''
+        self.init_value,_ = self._get_value(self._s)
+        self.final_value,_ = self._get_value(self._sPrime)
         target = tf.stop_gradient(self._r + self._nt*self.gamma*self.final_value)
         self.loss = tf.reduce_mean(tf.square(target-self.init_value))
         with tf.variable_scope('network/hid1',reuse=True):
             net_weights = tf.get_variable('W')
         self.get_grads = tf.gradients(self.loss,net_weights)
         self.train_step = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
+        '''get value graph
+            feed: _s
+            ops: val,action
+        '''
+        self.val,self.action = self._get_value(self._s)
+        '''reward and statePred training graph
+            feed: _s,_r,_sPrime,_nt
+        '''
+        weights,inds = self.kernel(self._s,self.S)
+        normed_weights = tf.nn.softmax(weights)
+        row_inds = self.row_offsets+inds
+        next_weights = tf.gather(self.W[0],row_inds)
+        next_inds = tf.gather(self.NNI[0],row_inds)
+        #TODO: scatter weights to full length vector
+        #TODO: concatenate across all possible actions
+        pred_sPrime_sim = tf.reduce_sum(tf.expand_dims(normed_weights,1)*tf.gather(self.W,inds),0)
+        target,ind = self.kernel(
 env = simple_env.Simple()
 agent = KADP(env)
 sess.run(tf.initialize_all_variables())
@@ -146,7 +165,7 @@ cumgrads = 0
 num_steps = int(1e6)
 refresh = int(1e3)
 mb_cond = 1
-mb_dim = 900
+mb_dim = 100
 mb_s = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
 mb_sPrime = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
 mb_r = np.zeros((mb_dim,1),dtype=np.float32)
@@ -163,8 +182,7 @@ def get_mb(cond,mb_s,mb_sPrime,mb_r,mb_nt):
                 mb_s[count,:] = np.asarray([xv[xi,yi],yv[xi,yi]])
                 count +=1
 
-        _,a = agent.get_value(mb_s)
-        a = sess.run(a)
+        a = sess.run(agent.action,feed_dict={agent._s:mb_s})
         for j in range(mb_dim):
             sPrime,r,term = env.get_transition(mb_s[j],a[j])
             mb_sPrime[j,:] = sPrime
@@ -173,8 +191,7 @@ def get_mb(cond,mb_s,mb_sPrime,mb_r,mb_nt):
     elif cond == 1:
         for j in range(mb_dim):
             mb_s[j,:] = env.observation_space.sample().astype(np.float32)
-        _,a = agent.get_value(mb_s)
-        a = sess.run(a)
+        a = sess.run(agent.action,feed_dict={agent._s:mb_s})
         for j in range(mb_dim):
             sPrime,r,term = env.get_transition(mb_s[j],a[j])
             mb_sPrime[j,:] = sPrime

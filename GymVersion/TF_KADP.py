@@ -1,8 +1,8 @@
 import time
 import numpy as np
 import tensorflow as tf
-np.random.seed(1)
-tf.set_random_seed(1)
+np.random.seed(11)
+tf.set_random_seed(11)
 print(np.random.rand())
 sess = tf.Session()
 foo = sess.run(tf.random_uniform((1,)))
@@ -100,16 +100,16 @@ class KADP(object):
         self.net_exists = False
         self.n_actions = env.action_space.n
         self.samples_per_action = 100
+        self.k = 100
         self.n_samples = self.n_actions*self.samples_per_action
         #for converting inds for a particular action to row inds
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = 2
-        self.k = 100
         self.b = 1e1
         self.hid_dim = 64
-        self.lr = 1e-2
-        self.softmax = True
+        self.lr = 1e-3
+        self.softmax = False
         self.change_actions = False
         self.gamma = .9
         '''create dataset'''
@@ -169,9 +169,6 @@ class KADP(object):
         self.final_value,_ = self._get_value(self._sPrime)
         target = tf.stop_gradient(self._r + self._nt*self.gamma*self.final_value)
         self.loss = tf.reduce_mean(tf.square(target-self.init_value))
-        with tf.variable_scope('network/hid1',reuse=True):
-            net_weights = tf.get_variable('W')
-        self.get_grads = tf.gradients(self.loss,net_weights)
         self.train_step = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
         '''get value graph
             feed: _s
@@ -182,37 +179,34 @@ class KADP(object):
             feed: _s,_a,_r,_sPrime,_nt
             ops: train_supervised
         '''
-        ''' this ignored actions...
-
-        weights,_ = self.kernel(self._s,self.S_view,k=self.n_samples)
-        normed_weights = tf.nn.softmax(weights)
-        print(normed_weights.get_shape(),self.R_view.shape)
-        r = tf.squeeze(tf.matmul(normed_weights,np.expand_dims(self.R_view,1)),[1])
-        W_view,_ = self.kernel(self.SPrime_view,self.S_view,k=self.n_samples)
-        next_weights = tf.matmul(normed_weights,W_view)
-        #next_weights = tf.matmul(normed_weights,tf.reshape(self.W,[self.n_samples,self.n_samples])) #is this reshaping properly? no.
-        target_s,_ = self.kernel(self._sPrime,self.S_view,k=self.n_samples)
-        '''
         gathered_S = tf.gather(self.S,self._a)
-        gathered_SPrime = tf.gather(self.SPrime,self._a)
+        gathered_SPrime = self.SPrime_view #tf.gather(self.SPrime,self._a)
+        print(self.SPrime_view.shape)
         gathered_R = tf.gather(self.R,self._a)
         weights,_ = self.kernel(self._s,gathered_S,minibatch=True)
         normed_weights = tf.nn.softmax(weights)
         r = tf.reduce_sum(normed_weights*gathered_R,1)
-        action_W,_ = self.kernel(tf.expand_dims(gathered_S,1),tf.expand_dims(gathered_SPrime,2),minibatch=True)
-        next_weights = tf.squeeze(tf.batch_matmul(tf.expand_dims(normed_weights,1),action_W))
-        target_s,_ = self.kernel(self._sPrime,gathered_S,minibatch=True)
+        #r = tf.Print(r,[tf.nn.zero_fraction(self.R),tf.nn.zero_fraction(gathered_R)],'hello there')
+        self.zero_fraction = tf.nn.zero_fraction(gathered_R)
+        action_W,_ = self.kernel(tf.expand_dims(tf.expand_dims(gathered_SPrime,0),0)
+                ,tf.expand_dims(gathered_S,2),minibatch=True)
+        pred_s = (tf.squeeze(tf.batch_matmul(tf.expand_dims(normed_weights,1),action_W)))
+        target_s = (self.kernel(self._sPrime,gathered_S,minibatch=True)[0])
 
-        self.s_loss = tf.reduce_mean(tf.reduce_sum(self._nt*tf.square(target_s-next_weights),1))
-        self.r_loss = tf.reduce_mean(tf.reduce_sum(tf.square(self._r-r),1))/10
-        self.super_loss = self.s_loss + self.r_loss
+        mse = tf.square(target_s-pred_s)
+        #mse = tf.Print(mse,[tf.reduce_sum(target_s,1),tf.reduce_sum(pred_s,1)])
+        dot = tf.reduce_sum(target_s*pred_s,1)
+        self.s_loss = tf.reduce_sum(self._nt*mse)/tf.reduce_sum(self._nt)
+        self.r_loss = tf.reduce_mean(tf.reduce_sum(tf.square(self._r-r),1))
+        self.super_loss = self.r_loss +self.s_loss
         self.train_supervised = tf.train.AdamOptimizer(self.lr).minimize(self.super_loss)
+        with tf.variable_scope('network/hid1',reuse=True):
+            net_weights = tf.get_variable('W')
+        self.get_grads = tf.gradients(self.super_loss,normed_weights)
         '''
-        next_weights = tf.gather(self.W[0],row_inds)
+        pred_s = tf.gather(self.W[0],row_inds)
         next_inds = tf.gather(self.NNI[0],row_inds)
         '''
-        #TODO: scatter weights to full length vector
-        #TODO: concatenate across all possible actions
 env = simple_env.Simple()
 agent = KADP(env)
 sess.run(tf.initialize_all_variables())
@@ -222,7 +216,7 @@ epsilon = .1
 cumloss = 0
 cumgrads = 0
 num_steps = int(1e6)
-refresh = int(1e2)
+refresh = int(1e1)
 mb_cond = 0
 mb_dim = 900
 mb_s = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
@@ -259,12 +253,12 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
             mb_nt[j] = not term
 get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
 for i in range(num_steps):
-    _,values,mb_values,cur_grads,cur_loss = sess.run([agent.train_supervised,agent.cur_V,agent.init_value,agent.get_grads,agent.super_loss],
+    _,values,mb_values,cur_grads,cur_loss,zero_frac = sess.run([agent.train_supervised,agent.cur_V,agent.init_value,agent.get_grads,agent.super_loss,agent.zero_fraction],
             feed_dict={agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
     cumgrads += np.abs(np.asarray(cur_grads)).sum()
     cumloss += cur_loss
     if i % refresh == 0:
-        print('iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
+        print(zero_frac,'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
         cur_time = time.clock()
         cumloss = 0
         cumgrads = 0
@@ -276,7 +270,7 @@ for i in range(num_steps):
         axes.set_ylim([-4,4])
         Xs = mb_s[:,0]
         Ys = mb_s[:,1]
-        plt.scatter(Xs,Ys,s=np.log(mb_values+1)*1000,c=np.log(mb_values))
+        plt.scatter(Xs,Ys,c=np.log(mb_values))
         '''database values'''
         plt.figure(2)
         plt.clf()
@@ -285,8 +279,8 @@ for i in range(num_steps):
         axes.set_ylim([-4,4])
         Xs = agent.SPrime_view[:,0]
         Ys = agent.SPrime_view[:,1]
-        plt.scatter(Xs,Ys,s=np.log(values+1)*1000,c=np.log(values))
+        plt.scatter(Xs,Ys,c=np.log(values))
         plt.pause(.01)
     if agent.change_actions:
-        get_mb(mb_cond,mb_s,mb_sPrime,mb_r,mb_nt)
+        get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
 

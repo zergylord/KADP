@@ -230,8 +230,8 @@ mb_nt = np.zeros((mb_dim,1),dtype=np.float32)
 #a = env.action_space.sample()
 def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
     if cond == 0:
-        x = np.linspace(-4,4,30)
-        y = np.linspace(4,-4,30)
+        x = np.linspace(-env.limit,env.limit,30)
+        y = np.linspace(env.limit,-env.limit,30)
         xv, yv = np.meshgrid(x,y)
         count = 0
         for xi in range(30):
@@ -271,19 +271,21 @@ for i in range(num_steps):
         plt.figure(1)
         plt.clf()
         axes = plt.gca()
-        axes.set_xlim([-4,4])
-        axes.set_ylim([-4,4])
-        Xs = mb_s[:,0]
-        Ys = mb_s[:,1]
+        axes.set_xlim([-env.limit,env.limit])
+        axes.set_ylim([-env.limit,env.limit])
+        mb_latent = simple_env.encode(mb_s)
+        Xs = mb_latent[:,0]
+        Ys = mb_latent[:,1]
         plt.scatter(Xs,Ys,s=100,c=np.log(mb_values))
         '''database values'''
         plt.figure(2)
         plt.clf()
         axes = plt.gca()
-        axes.set_xlim([-4,4])
-        axes.set_ylim([-4,4])
-        Xs = agent.SPrime_view[:,0]
-        Ys = agent.SPrime_view[:,1]
+        axes.set_xlim([-env.limit,env.limit])
+        axes.set_ylim([-env.limit,env.limit])
+        mem_latent = simple_env.encode(agent.SPrime_view)
+        Xs = mem_latent[:,0]
+        Ys = mem_latent[:,1]
         plt.scatter(Xs,Ys,s=100,c=np.log(values))
         plt.pause(.01)
     if agent.change_actions:

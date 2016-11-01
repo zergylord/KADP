@@ -32,7 +32,7 @@ refresh = int(1e3)
 tuples = []
 cumr = 0
 episode_count = 0
-reward_per_episode = -1
+reward_per_episode = 0
 last_return = 0
 Return = 0
 for t in range(total_steps):
@@ -85,10 +85,12 @@ for t in range(total_steps):
             plt.figure(1)
             plt.clf()
             axes = plt.gca()
-            axes.set_xlim([-4,4])
-            axes.set_ylim([-4,4])
+            axes.set_xlim([-env.limit,env.limit])
+            axes.set_ylim([-env.limit,env.limit])
             #plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1])
-            plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1],s=np.log(agent.V_view+1)*100,c=np.log(agent.V_view))
+            assert(np.all(agent.V_view >= 0))
+            latent_SPrime = simple_env.encode(agent.SPrime_view)
+            plt.scatter(latent_SPrime[:,0],latent_SPrime[:,1],s=np.log(agent.V_view+1)*100,c=np.log(agent.V_view))
             plt.pause(.01)
         print(t,
                 'time: ',time.clock()-cur_time,

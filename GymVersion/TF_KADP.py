@@ -40,43 +40,41 @@ class KADP(object):
             s = self.make_network(tf.expand_dims(x,0),tied=tie)
         elif rank == 2:
             s = self.make_network(x,tied=tie)
-        elif rank == 3:
+        elif rank >= 3:
             s = self.make_network(tf.reshape(x,[-1,self.s_dim]),tied=tie)
             s = tf.reshape(s,shape)
         else:
             print('this shouldnt happen...')
         return s
 
-    def kernel(self,x1,x2,k=None):
+    def kernel(self,x1,x2,k=None,minibatch=False):
         if k == None:
             k = self.k
         x1 = self.embed(x1)
         x2 = self.embed(x2)
         shape1,rank1 = get_shape_info(x1)
         shape2,rank2 = get_shape_info(x2)
-        if rank2 == rank2 and rank2 == 3:
-            print('poop')
-            ''' compare all combination'''
-            x1 = tf.expand_dims(x1,1)
-            x2 = tf.expand_dims(x2,2)
+        '''
+        print('shapes:',shape1,shape2)
+        print('ranks:',rank1,rank2)
+        '''
+        if minibatch:
+            ''' compare for each minibatch'''
+            assert_op = tf.Assert(tf.equal(shape1[0],shape2[0]),[shape1,shape2])
+            with tf.control_dependencies([assert_op]):
+                if rank1 < rank2:
+                    x1 = tf.expand_dims(x1,1)
+                elif rank1 > rank2:
+                    x2 = tf.expand_dims(x2,1)
+                else:
+                    x1=x1
         else:
             '''reshape to (n_actions,mb_dim,samples_per_action,s_dim)'''
-            if rank1 == 2:
-                x1 = tf.expand_dims(tf.expand_dims(x1,1),0)
-            else:
-                print('this shouldnt happen...')
-            '''either (n_samples,s_dim), or (a_dim,samples_per_action,s_dim)'''
-            if rank2 == 2:
-                x2 = tf.expand_dims(tf.expand_dims(x2,0),0)
-            elif rank2 == 3:
-                x2 = tf.expand_dims(x2,1)
-            else:
-                print('this shouldnt happen...')
-        '''Gaussian'''
-        '''
-        dist = tf.sqrt(tf.reduce_sum(tf.square(x1-x2),-1))
-        sim = tf.exp(-tf.clip_by_value(dist,0,10))
-        '''
+            assert rank1==2, rank1
+            assert rank2==3, rank2
+            x1 = tf.expand_dims(tf.expand_dims(x1,1),0)
+            '''x2 always has the first dim'''
+            x2 = tf.expand_dims(x2,1)
         '''dot-product'''
         inv_mag = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(x2),-1,keep_dims=True),eps,float("inf")))
         sim = tf.squeeze(tf.reduce_sum(x2*x1,-1,keep_dims=True)*inv_mag)
@@ -198,13 +196,12 @@ class KADP(object):
         gathered_S = tf.gather(self.S,self._a)
         gathered_SPrime = tf.gather(self.SPrime,self._a)
         gathered_R = tf.gather(self.R,self._a)
-        weights,_ = self.kernel(self._s,gathered_S)
+        weights,_ = self.kernel(self._s,gathered_S,minibatch=True)
         normed_weights = tf.nn.softmax(weights)
         r = tf.reduce_sum(normed_weights*gathered_R,1)
-        action_W,_ = self.kernel(gathered_S,gathered_SPrime)
-        action_W = tf.Print(action_W,[tf.shape(action_W),tf.shape(normed_weights)],'meowmeow')
+        action_W,_ = self.kernel(tf.expand_dims(gathered_S,1),tf.expand_dims(gathered_SPrime,2),minibatch=True)
         next_weights = tf.squeeze(tf.batch_matmul(tf.expand_dims(normed_weights,1),action_W))
-        target_s,_ = self.kernel(self._sPrime,gathered_S)
+        target_s,_ = self.kernel(self._sPrime,gathered_S,minibatch=True)
 
         self.s_loss = tf.reduce_mean(tf.reduce_sum(self._nt*tf.square(target_s-next_weights),1))
         self.r_loss = tf.reduce_mean(tf.reduce_sum(tf.square(self._r-r),1))/10
@@ -225,7 +222,7 @@ epsilon = .1
 cumloss = 0
 cumgrads = 0
 num_steps = int(1e6)
-refresh = int(1e3)
+refresh = int(1e2)
 mb_cond = 0
 mb_dim = 900
 mb_s = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)

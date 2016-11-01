@@ -35,10 +35,19 @@ class Simple(object):
     def get_transition(self,s,a):
         sPrime =  s + np.asarray([self.radius*np.cos(self.rad_inc*a),self.radius*np.sin(self.rad_inc*a)])
         sPrime += np.random.randn(2)*self.radius
-        #sPrime += np.random.randn(2)*self.radius
-        sPrime[sPrime > 4] = 4
-        sPrime[sPrime < -4] = -4
-        r,term = self.get_reward(sPrime)
+        '''walls'''
+        cross_hor_half = (s[1] < 0 and sPrime[1] > 0) or (s[1] > 0 and sPrime[1] < 0)
+        cross_vert_half = (s[0] < 0 and sPrime[0] > 0) or (s[0] > 0 and sPrime[0] < 0)
+        wall1 =  cross_hor_half and sPrime[0] > -3 and sPrime[0] < 3
+        wall2 = cross_vert_half and sPrime[1] > -3 and sPrime[1] < 3
+        if wall1 or wall2:
+            sPrime = s
+            r = 0
+            term = True
+        else:
+            sPrime[sPrime > 4] = 4
+            sPrime[sPrime < -4] = -4
+            r,term = self.get_reward(sPrime)
         return sPrime,r,term
     def step(self,a):    
         sPrime,r,term = self.get_transition(self.s,a)

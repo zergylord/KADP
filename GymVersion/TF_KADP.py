@@ -110,7 +110,7 @@ class KADP(object):
         self.hid_dim = 64
         self.lr = 1e-3
         self.softmax = False
-        self.change_actions = False
+        self.change_actions = True
         self.gamma = .9
         '''create dataset'''
         self.S = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
@@ -146,7 +146,7 @@ class KADP(object):
         inds = self.NNI
         R_ = tf.gather(self.R_view,inds)
         NT_ = tf.gather(self.NT_view,inds)
-        for t in range(1):
+        for t in range(10):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self.gamma*V_),-1)
             if self.softmax:
@@ -190,12 +190,12 @@ class KADP(object):
         self.zero_fraction = tf.nn.zero_fraction(gathered_R)
         action_W,_ = self.kernel(tf.expand_dims(tf.expand_dims(gathered_SPrime,0),0)
                 ,tf.expand_dims(gathered_S,2),minibatch=True)
-        pred_s = (tf.squeeze(tf.batch_matmul(tf.expand_dims(normed_weights,1),action_W)))
-        target_s = (self.kernel(self._sPrime,gathered_S,minibatch=True)[0])
+        pred_s = tf.nn.softmax(tf.squeeze(tf.batch_matmul(tf.expand_dims(normed_weights,1),action_W)))
+        target_s = tf.nn.softmax(self.kernel(self._sPrime,gathered_S,minibatch=True)[0])
 
         mse = tf.square(target_s-pred_s)
         #mse = tf.Print(mse,[tf.reduce_sum(target_s,1),tf.reduce_sum(pred_s,1)])
-        dot = tf.reduce_sum(target_s*pred_s,1)
+        dot = tf.square(target_s*pred_s)
         self.s_loss = tf.reduce_sum(self._nt*mse)/tf.reduce_sum(self._nt)
         self.r_loss = tf.reduce_mean(tf.reduce_sum(tf.square(self._r-r),1))
         self.super_loss = self.r_loss +self.s_loss
@@ -216,9 +216,12 @@ epsilon = .1
 cumloss = 0
 cumgrads = 0
 num_steps = int(1e6)
-refresh = int(1e1)
-mb_cond = 0
-mb_dim = 900
+refresh = int(1e2)
+mb_cond = 1
+if mb_cond == 0:
+    mb_dim = 900
+else:
+    mb_dim = 32
 mb_s = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
 mb_a = np.zeros((mb_dim,),dtype=np.int32)
 mb_sPrime = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
@@ -253,11 +256,13 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
             mb_nt[j] = not term
 get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
 for i in range(num_steps):
-    _,values,mb_values,cur_grads,cur_loss,zero_frac = sess.run([agent.train_supervised,agent.cur_V,agent.init_value,agent.get_grads,agent.super_loss,agent.zero_fraction],
+    _,cur_grads,cur_loss,zero_frac = sess.run([agent.train_step,agent.get_grads,agent.super_loss,agent.zero_fraction],
             feed_dict={agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
     cumgrads += np.abs(np.asarray(cur_grads)).sum()
     cumloss += cur_loss
     if i % refresh == 0:
+        values,mb_values = sess.run([agent.cur_V,agent.init_value],
+                feed_dict={agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
         print(zero_frac,'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
         cur_time = time.clock()
         cumloss = 0
@@ -270,7 +275,7 @@ for i in range(num_steps):
         axes.set_ylim([-4,4])
         Xs = mb_s[:,0]
         Ys = mb_s[:,1]
-        plt.scatter(Xs,Ys,c=np.log(mb_values))
+        plt.scatter(Xs,Ys,s=100,c=np.log(mb_values))
         '''database values'''
         plt.figure(2)
         plt.clf()
@@ -279,7 +284,7 @@ for i in range(num_steps):
         axes.set_ylim([-4,4])
         Xs = agent.SPrime_view[:,0]
         Ys = agent.SPrime_view[:,1]
-        plt.scatter(Xs,Ys,c=np.log(values))
+        plt.scatter(Xs,Ys,s=100,c=np.log(values))
         plt.pause(.01)
     if agent.change_actions:
         get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)

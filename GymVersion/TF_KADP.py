@@ -167,7 +167,8 @@ class KADP(object):
                 V.append(tf.reduce_sum(tf.nn.softmax(q_vals,dim=0)*q_vals,0))
             else:
                 V.append(tf.reduce_max(q_vals,0))
-        self.V_view= V[-1]
+        #self.V_view= V[-1]
+        self.V_view= tf.reduce_mean(tf.pack(V),0)
         self.V = tf.reshape(self.V_view,[self.n_actions,self.samples_per_action])
         '''get value graph
             feed: _s

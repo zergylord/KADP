@@ -75,6 +75,8 @@ class KADP(object):
             x1 = tf.expand_dims(tf.expand_dims(x1,1),0)
             '''x2 always has the first dim'''
             x2 = tf.expand_dims(x2,1)
+        '''Gauassian'''
+        #sim = tf.exp(-tf.reduce_sum(tf.square(x2-x1),-1)/self.b)
         '''dot-product'''
         inv_mag = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(x2),-1,keep_dims=True),eps,float("inf")))
         sim = tf.squeeze(tf.reduce_sum(x2*x1,-1,keep_dims=True)*inv_mag)
@@ -108,16 +110,16 @@ class KADP(object):
     def __init__(self,env,W_and_NNI = None):
         self.net_exists = False
         self.n_actions = env.action_space.n
-        self.samples_per_action = 100
-        self.k = 10
+        self.samples_per_action = 400
+        self.k = 400
         self.n_samples = self.n_actions*self.samples_per_action
         #for converting inds for a particular action to row inds
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = 2
-        self.b = 1e1
+        self.b = 1
         self.hid_dim = 64
-        self.lr = 1e-3
+        self.lr = 1e-4
         self.softmax = False
         self.change_actions = True
         '''create dataset'''
@@ -155,20 +157,21 @@ class KADP(object):
         self._nt = tf.placeholder(tf.float32,shape=(None,1,))
         self._gamma = tf.placeholder(tf.float32,shape=())
         '''create computation graph'''
-        normed_W = tf.nn.softmax(self.W)
+        normed_W = tf.nn.softmax(self.W/1e-3)
+        self.max_prob = tf.reduce_mean(tf.reduce_max(normed_W,-1))
         V = [tf.zeros((self.n_samples,),dtype=tf.float32)]
         inds = self.NNI
         R_ = tf.gather(self.R_view,inds)
         NT_ = tf.gather(self.NT_view,inds)
-        for t in range(100):
+        for t in range(10):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.softmax:
                 V.append(tf.reduce_sum(tf.nn.softmax(q_vals,dim=0)*q_vals,0))
             else:
                 V.append(tf.reduce_max(q_vals,0))
-        #self.V_view= V[-1]
-        self.V_view= tf.reduce_mean(tf.pack(V),0)
+        self.V_view= V[-1]
+        #self.V_view= tf.reduce_mean(tf.pack(V),0)
         self.V = tf.reshape(self.V_view,[self.n_actions,self.samples_per_action])
         '''get value graph
             feed: _s
@@ -184,9 +187,9 @@ class KADP(object):
         target = tf.stop_gradient(self._r + self._nt*self._gamma*self.final_value)
         self.v_loss = tf.reduce_mean(tf.square(target-self.val))
         self.train_v = tf.train.AdamOptimizer(self.lr).minimize(self.v_loss)
-        with tf.variable_scope('network/hid1',reuse=True):
-            net_weights = tf.get_variable('W')
-        self.get_grads = tf.gradients(self.v_loss,net_weights)
+        with tf.variable_scope('network',reuse=True):
+            net_weights = tf.get_variable('hid2/W')
+        self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.v_loss,self.W),-1))
         self.zero_fraction = tf.nn.zero_fraction(self.R)
         if self.k == self.samples_per_action:
             '''Q learning graph
@@ -234,7 +237,7 @@ epsilon = .1
 cumloss = 0
 cumgrads = 0
 num_steps = int(1e8)
-refresh = int(1e3)
+refresh = int(1e2)
 mb_cond = 2
 if mb_cond == 0:
     mb_dim = 900
@@ -274,15 +277,18 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
             mb_r[j] = r
             mb_nt[j] = not term
     elif cond == 2:
-        mb_s[0,:] = env.observation_space.sample().astype(np.float32)
+        mb_s[0,:] = env.reset()
         for j in range(mb_dim):
             if j > 0:
                 if term:
-                    mb_s[j,:] = env.observation_space.sample().astype(np.float32)
+                    mb_s[j,:] = env.reset()
                 else:
                     mb_s[j,:] = sPrime
-            mb_a[j] = sess.run(agent.action,feed_dict={agent._gamma:cur_gamma,agent._s:np.expand_dims(mb_s[j],0)})[0]
-            sPrime,r,term = env.get_transition(mb_s[j],mb_a[j])
+            if np.random.rand() < epsilon:
+                mb_a[j] = np.random.randint(agent.n_actions)
+            else:
+                mb_a[j] = sess.run(agent.action,feed_dict={agent._gamma:cur_gamma,agent._s:np.expand_dims(mb_s[j],0)})[0]
+            sPrime,r,term,_ = env.step(mb_a[j])
             mb_sPrime[j,:] = sPrime
             mb_r[j] = r
             mb_nt[j] = not term
@@ -293,19 +299,22 @@ max_gamma = .9
 gamma_anneal = 1 #int(1e4)
 gamma = np.linspace(0,max_gamma,gamma_anneal).astype(np.float32)
 cumr = 0
+cumprob = 0
 for i in range(num_steps):
     if i < gamma_anneal:
         cur_gamma =gamma[i]
     else:
         cur_gamma = max_gamma
-    _,cur_grads,cur_loss,zero_frac = sess.run([agent.train_v,agent.get_grads,agent.v_loss,agent.zero_fraction],
+    _,cur_grads,cur_loss,zero_frac,max_prob = sess.run([agent.train_v,agent.get_grads,agent.v_loss,agent.zero_fraction,agent.max_prob],
             feed_dict={agent._gamma:cur_gamma,agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
-    cumgrads += np.abs(np.asarray(cur_grads)).sum()
+    cumprob += max_prob
+    cumgrads += cur_grads
     cumloss += cur_loss
     if i % refresh == 0:
         values,mb_values = sess.run([agent.V_view,agent.val],feed_dict={agent._gamma:cur_gamma,agent._s:mb_s})
-        print(zero_frac,cur_gamma,1/(cumr/refresh/mb_dim+1e-10),'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
+        print(cumprob/refresh,zero_frac,cur_gamma,1/(cumr/refresh/mb_dim+1e-10),'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
         cumr = 0
+        cumprob = 0
         cur_time = time.clock()
         cumloss = 0
         cumgrads = 0
@@ -313,10 +322,8 @@ for i in range(num_steps):
         plt.figure(1)
         plt.clf()
         axes = plt.gca()
-        '''
         axes.set_xlim([-env.limit,env.limit])
         axes.set_ylim([-env.limit,env.limit])
-        '''
         mb_latent = simple_env.encode(mb_sPrime)
         Xs = mb_latent[:,0]
         Ys = mb_latent[:,1]
@@ -325,10 +332,8 @@ for i in range(num_steps):
         plt.figure(2)
         plt.clf()
         axes = plt.gca()
-        '''
         axes.set_xlim([-env.limit,env.limit])
         axes.set_ylim([-env.limit,env.limit])
-        '''
         mem_latent = simple_env.encode(agent.SPrime_view)
         Xs = mem_latent[:,0]
         Ys = mem_latent[:,1]

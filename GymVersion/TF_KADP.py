@@ -124,8 +124,8 @@ class KADP(object):
         self.s_dim = 2
         self.b = 1
         self.hid_dim = 64
-        self.lr = 1e-3
-        self.softmax = True
+        self.lr = 1e-2
+        self.softmax = False
         self.change_actions = True
         '''create dataset'''
         self.S = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
@@ -168,7 +168,7 @@ class KADP(object):
         inds = self.NNI
         R_ = tf.gather(self.R_view,inds)
         NT_ = tf.gather(self.NT_view,inds)
-        for t in range(100):
+        for t in range(32):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.softmax:
@@ -231,7 +231,7 @@ class KADP(object):
             '''
         with tf.variable_scope('network',reuse=True):
             net_weights = tf.get_variable('hid2/W')
-        self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,self.W),-1))
+        self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,net_weights),-1))
         self.zero_fraction = tf.nn.zero_fraction(self.R)
 env = simple_env.Simple()
 agent = KADP(env)

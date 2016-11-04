@@ -76,16 +76,21 @@ class KADP(object):
             '''x2 always has the first dim'''
             x2 = tf.expand_dims(x2,1)
         '''Gauassian'''
-        #sim = tf.exp(-tf.reduce_sum(tf.square(x2-x1),-1)/self.b)
+        sim = tf.exp(-tf.reduce_sum(tf.square(x2-x1),-1)/self.b)
         '''dot-product'''
+        '''
         inv_mag = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(x2),-1,keep_dims=True),eps,float("inf")))
         sim = tf.squeeze(tf.reduce_sum(x2*x1,-1,keep_dims=True)*inv_mag)
+        '''
         k_sim,k_inds = tf.nn.top_k(sim,k=k,sorted=False)
 
         return k_sim,k_inds
+    def _norm(self,inp):
+        #return tf.nn.softmax(inp)
+        return inp/tf.reduce_sum(inp,-1,keep_dims=True)
     def _get_value(self,inp):
         weights,inds = self.kernel(inp,self.S)
-        normed_weights = tf.nn.softmax(weights)
+        normed_weights = self._norm(weights)
         row_inds = self.row_offsets+inds
         R_ = tf.gather(self.R_view,row_inds)
         NT_ = tf.gather(self.NT_view,row_inds)
@@ -103,15 +108,15 @@ class KADP(object):
         NT_ = tf.gather(self.NT,a)
         V_ = tf.gather(self.V,a)
         weights,inds = self.kernel(inp,S_,minibatch=True)
-        normed_weights = tf.nn.softmax(weights)
+        normed_weights = self._norm(weights)
         q_val = tf.reduce_sum(normed_weights*(R_+NT_*self._gamma*V_),-1)
         return q_val
 
     def __init__(self,env,W_and_NNI = None):
         self.net_exists = False
         self.n_actions = env.action_space.n
-        self.samples_per_action = 400
-        self.k = 400
+        self.samples_per_action = 100
+        self.k = 100
         self.n_samples = self.n_actions*self.samples_per_action
         #for converting inds for a particular action to row inds
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
@@ -119,8 +124,8 @@ class KADP(object):
         self.s_dim = 2
         self.b = 1
         self.hid_dim = 64
-        self.lr = 1e-4
-        self.softmax = False
+        self.lr = 1e-3
+        self.softmax = True
         self.change_actions = True
         '''create dataset'''
         self.S = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
@@ -157,13 +162,13 @@ class KADP(object):
         self._nt = tf.placeholder(tf.float32,shape=(None,1,))
         self._gamma = tf.placeholder(tf.float32,shape=())
         '''create computation graph'''
-        normed_W = tf.nn.softmax(self.W/1e-3)
+        normed_W = self._norm(self.W)
         self.max_prob = tf.reduce_mean(tf.reduce_max(normed_W,-1))
         V = [tf.zeros((self.n_samples,),dtype=tf.float32)]
         inds = self.NNI
         R_ = tf.gather(self.R_view,inds)
         NT_ = tf.gather(self.NT_view,inds)
-        for t in range(10):
+        for t in range(100):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.softmax:
@@ -187,10 +192,6 @@ class KADP(object):
         target = tf.stop_gradient(self._r + self._nt*self._gamma*self.final_value)
         self.v_loss = tf.reduce_mean(tf.square(target-self.val))
         self.train_v = tf.train.AdamOptimizer(self.lr).minimize(self.v_loss)
-        with tf.variable_scope('network',reuse=True):
-            net_weights = tf.get_variable('hid2/W')
-        self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.v_loss,self.W),-1))
-        self.zero_fraction = tf.nn.zero_fraction(self.R)
         if self.k == self.samples_per_action:
             '''Q learning graph
                 feed: _s,_a,_r,_sPrime,_nt
@@ -209,13 +210,13 @@ class KADP(object):
             print(self.SPrime_view.shape)
             gathered_R = tf.gather(self.R,self._a)
             weights,_ = self.kernel(self._s,gathered_S,minibatch=True)
-            normed_weights = tf.nn.softmax(weights)
+            normed_weights = self._norm(weights)
             r = tf.reduce_sum(normed_weights*gathered_R,1)
             #r = tf.Print(r,[tf.nn.zero_fraction(self.R),tf.nn.zero_fraction(gathered_R)],'hello there')
             action_W,_ = self.kernel(tf.expand_dims(tf.expand_dims(gathered_SPrime,0),0)
                     ,tf.expand_dims(gathered_S,2),minibatch=True)
-            pred_s = tf.nn.softmax(tf.squeeze(tf.batch_matmul(tf.expand_dims(normed_weights,1),action_W)))
-            target_s = tf.nn.softmax(self.kernel(self._sPrime,gathered_S,minibatch=True)[0])
+            pred_s = self._norm(tf.squeeze(tf.batch_matmul(tf.expand_dims(normed_weights,1),action_W)))
+            target_s = self._norm(self.kernel(self._sPrime,gathered_S,minibatch=True)[0])
 
             mse = tf.square(target_s-pred_s)
             #mse = tf.Print(mse,[tf.reduce_sum(target_s,1),tf.reduce_sum(pred_s,1)])
@@ -228,6 +229,10 @@ class KADP(object):
             pred_s = tf.gather(self.W[0],row_inds)
             next_inds = tf.gather(self.NNI[0],row_inds)
             '''
+        with tf.variable_scope('network',reuse=True):
+            net_weights = tf.get_variable('hid2/W')
+        self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,self.W),-1))
+        self.zero_fraction = tf.nn.zero_fraction(self.R)
 env = simple_env.Simple()
 agent = KADP(env)
 sess.run(tf.initialize_all_variables())
@@ -305,7 +310,7 @@ for i in range(num_steps):
         cur_gamma =gamma[i]
     else:
         cur_gamma = max_gamma
-    _,cur_grads,cur_loss,zero_frac,max_prob = sess.run([agent.train_v,agent.get_grads,agent.v_loss,agent.zero_fraction,agent.max_prob],
+    _,cur_grads,cur_loss,zero_frac,max_prob = sess.run([agent.train_q,agent.get_grads,agent.q_loss,agent.zero_fraction,agent.max_prob],
             feed_dict={agent._gamma:cur_gamma,agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
     cumprob += max_prob
     cumgrads += cur_grads

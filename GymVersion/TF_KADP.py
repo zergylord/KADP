@@ -89,26 +89,31 @@ class KADP(object):
         #return tf.nn.softmax(inp)
         return inp/tf.reduce_sum(inp,-1,keep_dims=True)
     def _get_value(self,inp):
-        weights,inds = self.kernel(inp,self.S)
-        normed_weights = self._norm(weights)
-        row_inds = self.row_offsets+inds
-        R_ = tf.gather(self.R_view,row_inds)
-        NT_ = tf.gather(self.NT_view,row_inds)
-        V_ = tf.gather(self.V_view,row_inds)
-        q_vals = tf.reduce_sum(normed_weights*(R_+NT_*self._gamma*V_),-1)
+        q_vals = self._get_q(inp) 
         if self.softmax:
             val = tf.reduce_sum(tf.nn.softmax(q_vals,dim=0)*q_vals,0)
         else:
             val = tf.reduce_max(q_vals,0)
         action = tf.argmax(q_vals,0) #this is wasteful!
+        #val = tf.Print(val,[q_vals[:,0],action[0]],summarize=10)
         return val,action
-    def _get_q(self,inp,a):
-        S_ = tf.gather(self.S,a)
-        R_ = tf.gather(self.R,a)
-        NT_ = tf.gather(self.NT,a)
-        V_ = tf.gather(self.V,a)
-        weights,inds = self.kernel(inp,S_,minibatch=True)
+    def _get_q(self,inp,a=None):
+        if a == None:
+            S_ = self.S
+            weights,inds = self.kernel(inp,S_)
+        else:
+            S_ = tf.gather(self.S,a)
+            weights,inds = self.kernel(inp,S_,minibatch=True)
         normed_weights = self._norm(weights)
+        if a == None:
+            row_inds = self.row_offsets+inds
+            R_ = tf.gather(self.R_view,row_inds)
+            NT_ = tf.gather(self.NT_view,row_inds)
+            V_ = tf.gather(self.V_view,row_inds)
+        else:
+            R_ = tf.gather(self.R,a)
+            NT_ = tf.gather(self.NT,a)
+            V_ = tf.gather(self.V,a)
         q_val = tf.reduce_sum(normed_weights*(R_+NT_*self._gamma*V_),-1)
         return q_val
 
@@ -168,7 +173,7 @@ class KADP(object):
         inds = self.NNI
         R_ = tf.gather(self.R_view,inds)
         NT_ = tf.gather(self.NT_view,inds)
-        for t in range(32):
+        for t in range(10):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.softmax:
@@ -183,6 +188,7 @@ class KADP(object):
             ops: val,action
         '''
         self.val,self.action = self._get_value(self._s)
+        self.q_val = self._get_q(self._s)
         '''TD graph
             feed: _s,_r,_sPrime,_nt
             ops: train_step,get_grads,loss
@@ -242,10 +248,10 @@ epsilon = .1
 cumloss = 0
 cumgrads = 0
 num_steps = int(1e8)
-refresh = int(1e2)
-mb_cond = 2
+refresh = int(1e1)
+mb_cond = 0
 if mb_cond == 0:
-    mb_dim = 900
+    mb_dim = 100
 else:
     mb_dim = 32
 mb_s = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
@@ -257,12 +263,13 @@ mb_nt = np.zeros((mb_dim,1),dtype=np.float32)
 cur_gamma = 0.0
 def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
     if cond == 0:
-        x = np.linspace(-env.limit,env.limit,30)
-        y = np.linspace(env.limit,-env.limit,30)
+        side = int(np.sqrt(mb_dim))
+        x = np.linspace(-env.limit,env.limit,side)
+        y = np.linspace(env.limit,-env.limit,side)
         xv, yv = np.meshgrid(x,y)
         count = 0
-        for xi in range(30):
-            for yi in range(30):
+        for xi in range(side):
+            for yi in range(side):
                 mb_s[count,:] = np.asarray([xv[xi,yi],yv[xi,yi]])
                 count +=1
         mb_s[:] = simple_env.decode(mb_s)
@@ -316,7 +323,7 @@ for i in range(num_steps):
     cumgrads += cur_grads
     cumloss += cur_loss
     if i % refresh == 0:
-        values,mb_values = sess.run([agent.V_view,agent.val],feed_dict={agent._gamma:cur_gamma,agent._s:mb_s})
+        mb_q_values,mb_values,values = sess.run([agent.q_val,agent.val,agent.V_view],feed_dict={agent._gamma:cur_gamma,agent._s:mb_s})
         print(cumprob/refresh,zero_frac,cur_gamma,1/(cumr/refresh/mb_dim+1e-10),'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
         cumr = 0
         cumprob = 0
@@ -329,10 +336,16 @@ for i in range(num_steps):
         axes = plt.gca()
         axes.set_xlim([-env.limit,env.limit])
         axes.set_ylim([-env.limit,env.limit])
-        mb_latent = simple_env.encode(mb_sPrime)
+        mb_latent = simple_env.encode(mb_s)
         Xs = mb_latent[:,0]
         Ys = mb_latent[:,1]
-        plt.scatter(Xs,Ys,s=100,c=np.log(mb_values))
+        offX = .5*env.radius*np.cos(env.rad_inc*np.arange(4))
+        offY = .5*env.radius*np.sin(env.rad_inc*np.arange(4))
+        plt.hold(True)
+        for action in range(4):
+            plt.scatter(Xs+offX[action],Ys+offY[action],s=50,c=(mb_q_values[action]-mb_values))
+        plt.scatter(Xs,Ys,s=50,c=(mb_values))
+        plt.hold(False)
         '''database values'''
         plt.figure(2)
         plt.clf()

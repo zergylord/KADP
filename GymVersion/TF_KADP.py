@@ -26,6 +26,7 @@ class KADP(object):
             hid = linear(inp,self.hid_dim,'hid1',tf.nn.relu)
             hid = linear(hid,self.hid_dim,'hid2',tf.nn.relu)
             last_hid = linear(hid,self.s_dim,'hid3')
+        last_hid = tf.check_numerics(last_hid,'fuck net')
         return last_hid
     def embed(self,obs):
         x = obs
@@ -47,11 +48,11 @@ class KADP(object):
             print('this shouldnt happen...')
         return s
 
-    def kernel(self,x1,x2,k=None,minibatch=False):
+    def kernel(self,o1,o2,k=None,minibatch=False):
         if k == None:
             k = self.k
-        x1 = self.embed(x1)
-        x2 = self.embed(x2)
+        x1 = self.embed(o1)
+        x2 = self.embed(o2)
         shape1,rank1 = get_shape_info(x1)
         shape2,rank2 = get_shape_info(x2)
         '''
@@ -76,7 +77,10 @@ class KADP(object):
             '''x2 always has the first dim'''
             x2 = tf.expand_dims(x2,1)
         '''Gauassian'''
+        x1 = tf.check_numerics(x1,'fuck x1')
+        x2 = tf.check_numerics(x2,'fuck x2')
         sim = tf.exp(-tf.reduce_sum(tf.square(x2-x1),-1)/self.b)
+        sim = tf.check_numerics(sim,'fuck sim')
         '''dot-product'''
         '''
         inv_mag = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(x2),-1,keep_dims=True),eps,float("inf")))
@@ -104,7 +108,9 @@ class KADP(object):
         else:
             S_ = tf.gather(self.S,a)
             weights,inds = self.kernel(inp,S_,minibatch=True)
+        weights = tf.check_numerics(weights,'fuck weights')
         normed_weights = self._norm(weights)
+        normed_weights = tf.check_numerics(normed_weights,'fuck nw')
         if a == None:
             row_inds = self.row_offsets+inds
             R_ = tf.gather(self.R_view,row_inds)
@@ -129,7 +135,7 @@ class KADP(object):
         self.s_dim = 2
         self.b = 1
         self.hid_dim = 64
-        self.lr = 1e-2
+        self.lr = 1e-3
         self.softmax = False
         self.change_actions = True
         '''create dataset'''
@@ -167,20 +173,24 @@ class KADP(object):
         self._nt = tf.placeholder(tf.float32,shape=(None,1,))
         self._gamma = tf.placeholder(tf.float32,shape=())
         '''create computation graph'''
+        with tf.variable_scope('network',reuse=True):
+            net_weights = tf.get_variable('hid2/W')
         normed_W = self._norm(self.W)
         self.max_prob = tf.reduce_mean(tf.reduce_max(normed_W,-1))
         V = [tf.zeros((self.n_samples,),dtype=tf.float32)]
         inds = self.NNI
         R_ = tf.gather(self.R_view,inds)
         NT_ = tf.gather(self.NT_view,inds)
-        for t in range(10):
+        for t in range(32):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.softmax:
                 V.append(tf.reduce_sum(tf.nn.softmax(q_vals,dim=0)*q_vals,0))
             else:
                 V.append(tf.reduce_max(q_vals,0))
+        #V = tf.Print(V,[V[-1]],'poo')
         self.V_view= V[-1]
+        self.V_view = tf.check_numerics(self.V_view,'foobar')
         #self.V_view= tf.reduce_mean(tf.pack(V),0)
         self.V = tf.reshape(self.V_view,[self.n_actions,self.samples_per_action])
         '''get value graph
@@ -204,9 +214,14 @@ class KADP(object):
                 ops: train_q
             '''
             self.q = self._get_q(self._s,self._a)
+            self.q = tf.check_numerics(self.q,'fuck q')
             self.target_q = tf.stop_gradient(self._r+self._nt*self._gamma*self._get_value(self._sPrime)[0])
-            self.q_loss = tf.reduce_mean(tf.reduce_sum(tf.square(self.target_q - self.q),1))
-            self.train_q = tf.train.AdamOptimizer(self.lr).minimize(self.q_loss)
+            self.q_loss = tf.reduce_mean(tf.square(self.target_q - self.q))
+            self.q_loss = tf.check_numerics(self.q_loss,'fuck q loss')
+            optim = tf.train.AdamOptimizer(self.lr)
+            grads_and_vars = optim.compute_gradients(self.q_loss)
+            capped_grads_and_vars = [(tf.clip_by_value(gv[0],-10,10),gv[1]) for gv in grads_and_vars]
+            self.train_q = optim.apply_gradients(capped_grads_and_vars)
             '''reward and statePred training graph
                 feed: _s,_a,_r,_sPrime,_nt
                 ops: train_supervised
@@ -235,12 +250,11 @@ class KADP(object):
             pred_s = tf.gather(self.W[0],row_inds)
             next_inds = tf.gather(self.NNI[0],row_inds)
             '''
-        with tf.variable_scope('network',reuse=True):
-            net_weights = tf.get_variable('hid2/W')
         self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,net_weights),-1))
         self.zero_fraction = tf.nn.zero_fraction(self.R)
 env = simple_env.Simple()
 agent = KADP(env)
+check_op = tf.add_check_numerics_ops() 
 sess.run(tf.initialize_all_variables())
 cur_time = time.clock()
 epsilon = .1
@@ -317,6 +331,9 @@ for i in range(num_steps):
         cur_gamma =gamma[i]
     else:
         cur_gamma = max_gamma
+    assert np.all(mb_a < 4), 'fuck actions'
+    assert np.all(mb_s <= 1), 'fuck high state'
+    assert np.all(mb_s >= -1), 'fuck low state'
     _,cur_grads,cur_loss,zero_frac,max_prob = sess.run([agent.train_q,agent.get_grads,agent.q_loss,agent.zero_fraction,agent.max_prob],
             feed_dict={agent._gamma:cur_gamma,agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
     cumprob += max_prob
@@ -342,9 +359,10 @@ for i in range(num_steps):
         offX = .5*env.radius*np.cos(env.rad_inc*np.arange(4))
         offY = .5*env.radius*np.sin(env.rad_inc*np.arange(4))
         plt.hold(True)
+        bub_size = 100
         for action in range(4):
-            plt.scatter(Xs+offX[action],Ys+offY[action],s=50,c=(mb_q_values[action]-mb_values))
-        plt.scatter(Xs,Ys,s=50,c=(mb_values))
+            plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size,c=(np.sign(mb_q_values[action]-mb_values)))
+        #plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
         plt.hold(False)
         '''database values'''
         plt.figure(2)

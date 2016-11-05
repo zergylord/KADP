@@ -61,7 +61,7 @@ class Simple(object):
         assert np.all(s>=-4),s[s<-4]
         assert np.all(s<=4),s[s>4]
         sPrime =  s + np.asarray([self.radius*np.cos(self.rad_inc*a),self.radius*np.sin(self.rad_inc*a)])
-        sPrime += np.random.randn(2)*self.radius
+        #sPrime += np.random.randn(2)*self.radius
         '''walls'''
         cross_hor_half = (s[1] < 0 and sPrime[1] > 0) or (s[1] > 0 and sPrime[1] < 0)
         cross_vert_half = (s[0] < 0 and sPrime[0] > 0) or (s[0] > 0 and sPrime[0] < 0)

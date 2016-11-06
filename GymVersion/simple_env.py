@@ -14,6 +14,7 @@ class ObservationSpace(object):
 def odd_root(x,n=3):
     return np.power(abs(x),float(1)/n)*np.sign(x)
 n = 3
+'''
 def encode(obs):
     return odd_root(obs*Simple.limit**n,n)
 def decode(s):
@@ -23,7 +24,6 @@ def encode(obs):
     return obs*Simple.limit
 def decode(s):
     return s/Simple.limit
-'''
 '''
 M = np.random.randn(2,2)
 b = np.random.randn(2)*0
@@ -61,7 +61,7 @@ class Simple(object):
         assert np.all(s>=-4),s[s<-4]
         assert np.all(s<=4),s[s>4]
         sPrime =  s + np.asarray([self.radius*np.cos(self.rad_inc*a),self.radius*np.sin(self.rad_inc*a)])
-        #sPrime += np.random.randn(2)*self.radius
+        #sPrime += np.random.randn(2)*self.radius*.1
         '''walls'''
         cross_hor_half = (s[1] < 0 and sPrime[1] > 0) or (s[1] > 0 and sPrime[1] < 0)
         cross_vert_half = (s[0] < 0 and sPrime[0] > 0) or (s[0] > 0 and sPrime[0] < 0)

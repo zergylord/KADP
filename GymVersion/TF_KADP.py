@@ -24,8 +24,8 @@ class KADP(object):
     def make_network(self,inp,scope='network',tied=False):
         with tf.variable_scope(scope,reuse=tied):
             hid = linear(inp,self.hid_dim,'hid1',tf.nn.relu)
-            hid = linear(hid,self.hid_dim,'hid2',tf.nn.relu)
-            last_hid = linear(hid,self.s_dim,'hid3')
+            last_hid = linear(hid,self.z_dim,'hid2',tf.nn.relu)
+            #last_hid = linear(hid,self.z_dim,'hid3')
         last_hid = tf.check_numerics(last_hid,'fuck net')
         return last_hid
     def embed(self,obs):
@@ -43,7 +43,10 @@ class KADP(object):
             s = self.make_network(x,tied=tie)
         elif rank >= 3:
             s = self.make_network(tf.reshape(x,[-1,self.s_dim]),tied=tie)
-            s = tf.reshape(s,shape)
+            if shape.__class__ == tf.Tensor:
+                s = tf.reshape(s,tf.concat(0,[shape[:-1],(self.z_dim,)]))
+            else:
+                s = tf.reshape(s,shape[:-1]+(self.z_dim,))
         else:
             print('this shouldnt happen...')
         return s
@@ -108,7 +111,9 @@ class KADP(object):
         else:
             S_ = tf.gather(self.S,a)
             weights,inds = self.kernel(inp,S_,minibatch=True)
+        #weights = tf.Print(weights,[tf.reduce_min(weights),tf.reduce_max(weights)])
         weights = tf.check_numerics(weights,'fuck weights')
+        self.foo = weights
         normed_weights = self._norm(weights)
         normed_weights = tf.check_numerics(normed_weights,'fuck nw')
         if a == None:
@@ -133,9 +138,10 @@ class KADP(object):
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = 2
+        self.z_dim = 2
         self.b = 1
         self.hid_dim = 64
-        self.lr = 1e-3
+        self.lr = 1e-4
         self.softmax = False
         self.change_actions = True
         '''create dataset'''
@@ -162,6 +168,11 @@ class KADP(object):
         ''' create similarity sparse matrix'''
         if W_and_NNI == None:
             self.W,inds = self.kernel(self.SPrime_view,self.S)
+            tf.histogram_summary('W',self.W)
+            with tf.variable_scope('network',reuse=True):
+                tf.histogram_summary('hid1',tf.get_variable('hid1/W'))
+                tf.histogram_summary('hid2',tf.get_variable('hid2/W'))
+                #tf.histogram_summary('hid3',tf.get_variable('hid3/W'))
             self.NNI = self.row_offsets+inds
         else:
             self.W,self.NNI = W_and_NNI
@@ -220,7 +231,8 @@ class KADP(object):
             self.q_loss = tf.check_numerics(self.q_loss,'fuck q loss')
             optim = tf.train.AdamOptimizer(self.lr)
             grads_and_vars = optim.compute_gradients(self.q_loss)
-            capped_grads_and_vars = [(tf.clip_by_value(gv[0],-10,10),gv[1]) for gv in grads_and_vars]
+            capped_grads_and_vars = [(tf.clip_by_value(gv[0],-100,100),gv[1]) for gv in grads_and_vars]
+            grad_summaries = [tf.histogram_summary('poo'+v.name,g) if g is not None else '' for g,v in grads_and_vars]
             self.train_q = optim.apply_gradients(capped_grads_and_vars)
             '''reward and statePred training graph
                 feed: _s,_a,_r,_sPrime,_nt
@@ -255,6 +267,14 @@ class KADP(object):
 env = simple_env.Simple()
 agent = KADP(env)
 check_op = tf.add_check_numerics_ops() 
+merged = tf.merge_all_summaries()
+flags = tf.app.flags
+FLAGS = flags.FLAGS
+flags.DEFINE_string('summary_dir', '/tmp/kadp', 'Summaries directory')
+if tf.gfile.Exists(FLAGS.summary_dir):
+    tf.gfile.DeleteRecursively(FLAGS.summary_dir)
+    tf.gfile.MakeDirs(FLAGS.summary_dir)
+train_writer = tf.train.SummaryWriter(FLAGS.summary_dir + '/train',sess.graph)
 sess.run(tf.initialize_all_variables())
 cur_time = time.clock()
 epsilon = .1
@@ -262,7 +282,7 @@ epsilon = .1
 cumloss = 0
 cumgrads = 0
 num_steps = int(1e8)
-refresh = int(1e1)
+refresh = int(1e2)
 mb_cond = 0
 if mb_cond == 0:
     mb_dim = 100
@@ -331,22 +351,14 @@ for i in range(num_steps):
         cur_gamma =gamma[i]
     else:
         cur_gamma = max_gamma
-    assert np.all(mb_a < 4), 'fuck actions'
-    assert np.all(mb_s <= 1), 'fuck high state'
-    assert np.all(mb_s >= -1), 'fuck low state'
-    _,cur_grads,cur_loss,zero_frac,max_prob = sess.run([agent.train_q,agent.get_grads,agent.q_loss,agent.zero_fraction,agent.max_prob],
+    summary,_,cur_grads,cur_loss,zero_frac,max_prob = sess.run([merged,agent.train_q,agent.get_grads,agent.q_loss,agent.zero_fraction,agent.max_prob],
             feed_dict={agent._gamma:cur_gamma,agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
+    train_writer.add_summary(summary)
     cumprob += max_prob
     cumgrads += cur_grads
     cumloss += cur_loss
     if i % refresh == 0:
-        mb_q_values,mb_values,values = sess.run([agent.q_val,agent.val,agent.V_view],feed_dict={agent._gamma:cur_gamma,agent._s:mb_s})
-        print(cumprob/refresh,zero_frac,cur_gamma,1/(cumr/refresh/mb_dim+1e-10),'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
-        cumr = 0
-        cumprob = 0
-        cur_time = time.clock()
-        cumloss = 0
-        cumgrads = 0
+        mb_q_values,mb_values,mb_actions,values = sess.run([agent.q_val,agent.val,agent.action,agent.V_view],feed_dict={agent._gamma:cur_gamma,agent._s:mb_s}) 
         '''inferred values'''
         plt.figure(1)
         plt.clf()
@@ -360,8 +372,10 @@ for i in range(num_steps):
         offY = .5*env.radius*np.sin(env.rad_inc*np.arange(4))
         plt.hold(True)
         bub_size = 100
+        assert np.all(np.max(mb_q_values,0) == mb_values) and np.all(np.min(mb_q_values,0) != mb_values)
+        assert np.all(np.argmax(mb_q_values,0) == mb_actions)
         for action in range(4):
-            plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size,c=(np.sign(mb_q_values[action]-mb_values)))
+            plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size,c=((mb_q_values[action]-mb_values)))
         #plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
         plt.hold(False)
         '''database values'''
@@ -375,6 +389,14 @@ for i in range(num_steps):
         Ys = mem_latent[:,1]
         plt.scatter(Xs,Ys,s=100,c=np.log(values))
         plt.pause(.01)
+        '''test performance'''
+        get_mb(2,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
+        print(cumprob/refresh,zero_frac,cur_gamma,1/(mb_r.sum()/mb_dim+1e-10),'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
+        cumr = 0
+        cumprob = 0
+        cur_time = time.clock()
+        cumloss = 0
+        cumgrads = 0
     if agent.change_actions:
         get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
         if mb_cond == 2:

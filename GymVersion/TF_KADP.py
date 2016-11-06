@@ -24,7 +24,7 @@ class KADP(object):
     def make_network(self,inp,scope='network',tied=False):
         with tf.variable_scope(scope,reuse=tied):
             hid = linear(inp,self.hid_dim,'hid1',tf.nn.relu)
-            last_hid = linear(hid,self.z_dim,'hid2',tf.nn.relu)
+            last_hid = linear(hid,self.z_dim,'hid2')
             #last_hid = linear(hid,self.z_dim,'hid3')
         last_hid = tf.check_numerics(last_hid,'fuck net')
         return last_hid
@@ -264,7 +264,7 @@ class KADP(object):
             '''
         self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,net_weights),-1))
         self.zero_fraction = tf.nn.zero_fraction(self.R)
-env = simple_env.Simple()
+env = simple_env.Simple(3)
 agent = KADP(env)
 check_op = tf.add_check_numerics_ops() 
 merged = tf.merge_all_summaries()
@@ -368,13 +368,13 @@ for i in range(num_steps):
         mb_latent = simple_env.encode(mb_s)
         Xs = mb_latent[:,0]
         Ys = mb_latent[:,1]
-        offX = .5*env.radius*np.cos(env.rad_inc*np.arange(4))
-        offY = .5*env.radius*np.sin(env.rad_inc*np.arange(4))
+        offX = .5*env.radius*np.cos(env.rad_inc*np.arange(agent.n_actions))
+        offY = .5*env.radius*np.sin(env.rad_inc*np.arange(agent.n_actions))
         plt.hold(True)
         bub_size = 100
         assert np.all(np.max(mb_q_values,0) == mb_values) and np.all(np.min(mb_q_values,0) != mb_values)
         assert np.all(np.argmax(mb_q_values,0) == mb_actions)
-        for action in range(4):
+        for action in range(agent.n_actions):
             plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size,c=((mb_q_values[action]-mb_values)))
         #plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
         plt.hold(False)

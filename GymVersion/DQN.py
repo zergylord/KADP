@@ -35,7 +35,7 @@ env = simple_env.Simple()
 sess = tf.Session()
 sess.run(tf.initialize_all_variables())
 num_steps = int(1e5)
-refresh = int(1e2)
+refresh = int(1e3)
 mb_dim = 32
 mb_s = np.zeros((mb_dim,in_dim))
 mb_a = np.zeros((mb_dim,),dtype=np.int32)

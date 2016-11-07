@@ -24,8 +24,8 @@ class KADP(object):
     def make_network(self,inp,scope='network',tied=False):
         with tf.variable_scope(scope,reuse=tied):
             hid = linear(inp,self.hid_dim,'hid1',tf.nn.relu)
-            last_hid = linear(hid,self.z_dim,'hid2')
-            #last_hid = linear(hid,self.z_dim,'hid3')
+            hid = linear(hid,self.hid_dim,'hid2',tf.nn.relu)
+            last_hid = linear(hid,self.z_dim,'hid3')
         last_hid = tf.check_numerics(last_hid,'fuck net')
         return last_hid
     def embed(self,obs):
@@ -127,6 +127,15 @@ class KADP(object):
             V_ = tf.gather(self.V,a)
         q_val = tf.reduce_sum(normed_weights*(R_+NT_*self._gamma*V_),-1)
         return q_val
+    def gen_data(self,env):
+        for a in range(self.n_actions):
+            for i in range(self.samples_per_action):
+                s = env.observation_space.sample()
+                sPrime,r,term = env.get_transition(s,a)
+                self.S[a,i] = s
+                self.SPrime[a,i] = sPrime
+                self.R[a,i] = r
+                self.NT[a,i] = np.float32(not term)
 
     def __init__(self,env,W_and_NNI = None):
         self.net_exists = False
@@ -142,8 +151,17 @@ class KADP(object):
         self.b = 1
         self.hid_dim = 64
         self.lr = 1e-4
-        self.softmax = False
+        self.softmax = True
         self.change_actions = True
+        ''' all placeholders'''
+        self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
+        self._a = tf.placeholder(tf.int32,shape=(None,))
+        self._r = tf.placeholder(tf.float32,shape=(None,1,))
+        self._sPrime = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
+        self._nt = tf.placeholder(tf.float32,shape=(None,1,))
+        self._gamma = tf.placeholder(tf.float32,shape=())
+        self._S = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,self.s_dim))
+        self._SPrime_view = tf.placeholder(tf.float32,shape=(self.n_samples,self.s_dim))
         '''create dataset'''
         self.S = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
         self.S_view = self.S.reshape(-1,self.s_dim)
@@ -157,17 +175,10 @@ class KADP(object):
         self.V = np.zeros((self.n_actions,self.samples_per_action))
         self.V_view = self.V.reshape(-1)
         '''
-        for a in range(self.n_actions):
-            for i in range(self.samples_per_action):
-                s = env.observation_space.sample()
-                sPrime,r,term = env.get_transition(s,a)
-                self.S[a,i] = s
-                self.SPrime[a,i] = sPrime
-                self.R[a,i] = r
-                self.NT[a,i] = np.float32(not term)
+        self.gen_data(env)
         ''' create similarity sparse matrix'''
         if W_and_NNI == None:
-            self.W,inds = self.kernel(self.SPrime_view,self.S)
+            self.W,inds = self.kernel(self._SPrime_view,self._S)
             tf.histogram_summary('W',self.W)
             with tf.variable_scope('network',reuse=True):
                 tf.histogram_summary('hid1',tf.get_variable('hid1/W'))
@@ -176,13 +187,6 @@ class KADP(object):
             self.NNI = self.row_offsets+inds
         else:
             self.W,self.NNI = W_and_NNI
-        ''' all placeholders'''
-        self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
-        self._a = tf.placeholder(tf.int32,shape=(None,))
-        self._r = tf.placeholder(tf.float32,shape=(None,1,))
-        self._sPrime = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
-        self._nt = tf.placeholder(tf.float32,shape=(None,1,))
-        self._gamma = tf.placeholder(tf.float32,shape=())
         '''create computation graph'''
         with tf.variable_scope('network',reuse=True):
             net_weights = tf.get_variable('hid2/W')
@@ -201,6 +205,7 @@ class KADP(object):
                 V.append(tf.reduce_max(q_vals,0))
         #V = tf.Print(V,[V[-1]],'poo')
         self.V_view= V[-1]
+        self.val_diff = tf.reduce_sum(tf.square(V[-1]-V[-2]))
         self.V_view = tf.check_numerics(self.V_view,'foobar')
         #self.V_view= tf.reduce_mean(tf.pack(V),0)
         self.V = tf.reshape(self.V_view,[self.n_actions,self.samples_per_action])
@@ -264,7 +269,7 @@ class KADP(object):
             '''
         self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,net_weights),-1))
         self.zero_fraction = tf.nn.zero_fraction(self.R)
-env = simple_env.Simple(3)
+env = simple_env.Simple(4)
 agent = KADP(env)
 check_op = tf.add_check_numerics_ops() 
 merged = tf.merge_all_summaries()
@@ -283,11 +288,11 @@ cumloss = 0
 cumgrads = 0
 num_steps = int(1e8)
 refresh = int(1e2)
-mb_cond = 0
+mb_cond = 1
 if mb_cond == 0:
     mb_dim = 100
 else:
-    mb_dim = 32
+    mb_dim = 100
 mb_s = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
 mb_a = np.zeros((mb_dim,),dtype=np.int32)
 mb_sPrime = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
@@ -307,7 +312,7 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
                 mb_s[count,:] = np.asarray([xv[xi,yi],yv[xi,yi]])
                 count +=1
         mb_s[:] = simple_env.decode(mb_s)
-        mb_a = sess.run(agent.action,feed_dict={agent._gamma:cur_gamma,agent._s:mb_s})
+        mb_a = sess.run(agent.action,feed_dict={agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s})
         for j in range(mb_dim):
             sPrime,r,term = env.get_transition(mb_s[j],mb_a[j])
             mb_sPrime[j,:] = sPrime
@@ -316,7 +321,7 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
     elif cond == 1:
         for j in range(mb_dim):
             mb_s[j,:] = env.observation_space.sample().astype(np.float32)
-        mb_a = sess.run(agent.action,feed_dict={agent._gamma:cur_gamma,agent._s:mb_s})
+        mb_a = sess.run(agent.action,feed_dict={agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s})
         for j in range(mb_dim):
             sPrime,r,term = env.get_transition(mb_s[j],mb_a[j])
             mb_sPrime[j,:] = sPrime
@@ -333,7 +338,7 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
             if np.random.rand() < epsilon:
                 mb_a[j] = np.random.randint(agent.n_actions)
             else:
-                mb_a[j] = sess.run(agent.action,feed_dict={agent._gamma:cur_gamma,agent._s:np.expand_dims(mb_s[j],0)})[0]
+                mb_a[j] = sess.run(agent.action,feed_dict={agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:np.expand_dims(mb_s[j],0)})[0]
             sPrime,r,term,_ = env.step(mb_a[j])
             mb_sPrime[j,:] = sPrime
             mb_r[j] = r
@@ -346,19 +351,23 @@ gamma_anneal = 1 #int(1e4)
 gamma = np.linspace(0,max_gamma,gamma_anneal).astype(np.float32)
 cumr = 0
 cumprob = 0
+def softmax(x,dim=-1):
+    ex = np.exp(x)
+    denom = np.expand_dims(np.sum(ex,dim),dim)
+    return ex/denom
 for i in range(num_steps):
     if i < gamma_anneal:
         cur_gamma =gamma[i]
     else:
         cur_gamma = max_gamma
     summary,_,cur_grads,cur_loss,zero_frac,max_prob = sess.run([merged,agent.train_q,agent.get_grads,agent.q_loss,agent.zero_fraction,agent.max_prob],
-            feed_dict={agent._gamma:cur_gamma,agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
+            feed_dict={agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
     train_writer.add_summary(summary)
     cumprob += max_prob
     cumgrads += cur_grads
     cumloss += cur_loss
     if i % refresh == 0:
-        mb_q_values,mb_values,mb_actions,values = sess.run([agent.q_val,agent.val,agent.action,agent.V_view],feed_dict={agent._gamma:cur_gamma,agent._s:mb_s}) 
+        mb_q_values,mb_values,mb_actions,values,val_diff = sess.run([agent.q_val,agent.val,agent.action,agent.V_view,agent.val_diff],feed_dict={agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s}) 
         '''inferred values'''
         plt.figure(1)
         plt.clf()
@@ -372,11 +381,19 @@ for i in range(num_steps):
         offY = .5*env.radius*np.sin(env.rad_inc*np.arange(agent.n_actions))
         plt.hold(True)
         bub_size = 100
-        assert np.all(np.max(mb_q_values,0) == mb_values) and np.all(np.min(mb_q_values,0) != mb_values)
+        if agent.softmax:
+            val = np.sum(softmax(mb_q_values,0)*mb_q_values,0)
+            assert np.all(np.abs(val -  mb_values) <1e-6), print(val-mb_values,np.concatenate([[val],[mb_values]]))
+        else:
+            assert np.all(np.max(mb_q_values,0) == mb_values)
         assert np.all(np.argmax(mb_q_values,0) == mb_actions)
+        print('net reward stats: ',np.sum(agent.R,1))
+        print('mb value stats: ',np.sum(mb_q_values,1))
         for action in range(agent.n_actions):
-            plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size,c=((mb_q_values[action]-mb_values)))
-        #plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
+            mask = np.argmax(mb_q_values,0) == action
+            #plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size*mask/2+10)#,c=((mb_q_values[action]-mb_values)))
+            plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
+        plt.scatter(Xs,Ys,s=bub_size,c=np.log(mb_values))
         plt.hold(False)
         '''database values'''
         plt.figure(2)
@@ -391,12 +408,15 @@ for i in range(num_steps):
         plt.pause(.01)
         '''test performance'''
         get_mb(2,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
-        print(cumprob/refresh,zero_frac,cur_gamma,1/(mb_r.sum()/mb_dim+1e-10),'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
+        print(val_diff,cumprob/refresh,zero_frac,cur_gamma,1/(mb_r.sum()/mb_dim+1e-10),'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
         cumr = 0
         cumprob = 0
         cur_time = time.clock()
         cumloss = 0
         cumgrads = 0
+        '''testing'''
+        agent.gen_data(env)
+
     if agent.change_actions:
         get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
         if mb_cond == 2:

@@ -29,6 +29,7 @@ def linear(in_,out_dim,name,activation_fn=None,bias=True,bias_value=None,init=or
         in_dim = in_.shape[1]
     with tf.variable_scope(name,reuse=tied):
         W = tf.get_variable('W',[in_dim,out_dim],tf.float32,initializer=init)
+        #W = tf.Print(W,[tf.reduce_max(W)])
         #W = tf.random_uniform([in_dim,out_dim], minval=-0.05, maxval=0.05)
         out = tf.matmul(in_,W)
         if bias:

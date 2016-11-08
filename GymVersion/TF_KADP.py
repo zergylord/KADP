@@ -2,7 +2,7 @@ import time
 import numpy as np
 import tensorflow as tf
 np.random.seed(111)
-tf.set_random_seed(111)
+#tf.set_random_seed(111)
 print(np.random.rand())
 sess = tf.Session()
 foo = sess.run(tf.random_uniform((1,)))
@@ -22,10 +22,21 @@ def get_shape_info(x):
 
 class KADP(object):
     def make_network(self,inp,scope='network',tied=False):
+        initial = tf.contrib.layers.xavier_initializer()
+        #initial = orthogonal_initializer()
         with tf.variable_scope(scope,reuse=tied):
-            hid = linear(inp,self.hid_dim,'hid1',tf.nn.relu)
-            hid = linear(hid,self.hid_dim,'hid2',tf.nn.relu)
-            last_hid = linear(hid,self.z_dim,'hid3')
+            #hid = linear(inp,self.hid_dim,'hid1',tf.nn.relu,init=initial)
+            #hid = linear(hid,self.hid_dim,'hid2',tf.nn.relu)
+            #last_hid = linear(hid,self.z_dim,'hid3',init=initial)
+            last_hid = linear(inp,self.z_dim,'hid1')
+        if not tied: #only want to do this once
+            with tf.variable_scope('network',reuse=True):
+                self.net_weights = tf.get_variable('hid1/W')
+                tf.histogram_summary('hid1',tf.get_variable('hid1/W'))
+                '''
+                tf.histogram_summary('hid2',tf.get_variable('hid2/W'))
+                tf.histogram_summary('hid3',tf.get_variable('hid3/W'))
+                '''
         last_hid = tf.check_numerics(last_hid,'fuck net')
         return last_hid
     def embed(self,obs):
@@ -106,10 +117,10 @@ class KADP(object):
         return val,action
     def _get_q(self,inp,a=None):
         if a == None:
-            S_ = self.S
+            S_ = self._S
             weights,inds = self.kernel(inp,S_)
         else:
-            S_ = tf.gather(self.S,a)
+            S_ = tf.gather(self._S,a)
             weights,inds = self.kernel(inp,S_,minibatch=True)
         #weights = tf.Print(weights,[tf.reduce_min(weights),tf.reduce_max(weights)])
         weights = tf.check_numerics(weights,'fuck weights')
@@ -118,12 +129,12 @@ class KADP(object):
         normed_weights = tf.check_numerics(normed_weights,'fuck nw')
         if a == None:
             row_inds = self.row_offsets+inds
-            R_ = tf.gather(self.R_view,row_inds)
-            NT_ = tf.gather(self.NT_view,row_inds)
+            R_ = tf.gather(self._R_view,row_inds)
+            NT_ = tf.gather(self._NT_view,row_inds)
             V_ = tf.gather(self.V_view,row_inds)
         else:
-            R_ = tf.gather(self.R,a)
-            NT_ = tf.gather(self.NT,a)
+            R_ = tf.gather(self._R,a)
+            NT_ = tf.gather(self._NT,a)
             V_ = tf.gather(self.V,a)
         q_val = tf.reduce_sum(normed_weights*(R_+NT_*self._gamma*V_),-1)
         return q_val
@@ -151,7 +162,7 @@ class KADP(object):
         self.b = 1
         self.hid_dim = 64
         self.lr = 1e-4
-        self.softmax = True
+        self.softmax = False
         self.change_actions = True
         ''' all placeholders'''
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
@@ -160,8 +171,13 @@ class KADP(object):
         self._sPrime = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
         self._nt = tf.placeholder(tf.float32,shape=(None,1,))
         self._gamma = tf.placeholder(tf.float32,shape=())
+
         self._S = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,self.s_dim))
         self._SPrime_view = tf.placeholder(tf.float32,shape=(self.n_samples,self.s_dim))
+        self._R = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,))
+        self._R_view = tf.reshape(self._R,(-1,))
+        self._NT = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,))
+        self._NT_view = tf.reshape(self._NT,(-1,))
         '''create dataset'''
         self.S = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
         self.S_view = self.S.reshape(-1,self.s_dim)
@@ -180,22 +196,16 @@ class KADP(object):
         if W_and_NNI == None:
             self.W,inds = self.kernel(self._SPrime_view,self._S)
             tf.histogram_summary('W',self.W)
-            with tf.variable_scope('network',reuse=True):
-                tf.histogram_summary('hid1',tf.get_variable('hid1/W'))
-                tf.histogram_summary('hid2',tf.get_variable('hid2/W'))
-                #tf.histogram_summary('hid3',tf.get_variable('hid3/W'))
             self.NNI = self.row_offsets+inds
         else:
             self.W,self.NNI = W_and_NNI
         '''create computation graph'''
-        with tf.variable_scope('network',reuse=True):
-            net_weights = tf.get_variable('hid2/W')
         normed_W = self._norm(self.W)
         self.max_prob = tf.reduce_mean(tf.reduce_max(normed_W,-1))
         V = [tf.zeros((self.n_samples,),dtype=tf.float32)]
         inds = self.NNI
-        R_ = tf.gather(self.R_view,inds)
-        NT_ = tf.gather(self.NT_view,inds)
+        R_ = tf.gather(self._R_view,inds)
+        NT_ = tf.gather(self._NT_view,inds)
         for t in range(32):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
@@ -243,14 +253,13 @@ class KADP(object):
                 feed: _s,_a,_r,_sPrime,_nt
                 ops: train_supervised
             '''
-            gathered_S = tf.gather(self.S,self._a)
-            gathered_SPrime = self.SPrime_view #tf.gather(self.SPrime,self._a)
-            print(self.SPrime_view.shape)
-            gathered_R = tf.gather(self.R,self._a)
+            gathered_S = tf.gather(self._S,self._a)
+            gathered_SPrime = self._SPrime_view #tf.gather(self.SPrime,self._a)
+            gathered_R = tf.gather(self._R,self._a)
             weights,_ = self.kernel(self._s,gathered_S,minibatch=True)
             normed_weights = self._norm(weights)
             r = tf.reduce_sum(normed_weights*gathered_R,1)
-            #r = tf.Print(r,[tf.nn.zero_fraction(self.R),tf.nn.zero_fraction(gathered_R)],'hello there')
+            #r = tf.Print(r,[tf.nn.zero_fraction(self._R),tf.nn.zero_fraction(gathered_R)],'hello there')
             action_W,_ = self.kernel(tf.expand_dims(tf.expand_dims(gathered_SPrime,0),0)
                     ,tf.expand_dims(gathered_S,2),minibatch=True)
             pred_s = self._norm(tf.squeeze(tf.batch_matmul(tf.expand_dims(normed_weights,1),action_W)))
@@ -267,9 +276,9 @@ class KADP(object):
             pred_s = tf.gather(self.W[0],row_inds)
             next_inds = tf.gather(self.NNI[0],row_inds)
             '''
-        self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,net_weights),-1))
-        self.zero_fraction = tf.nn.zero_fraction(self.R)
-env = simple_env.Simple(4)
+        self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,self.net_weights),-1))
+        self.zero_fraction = tf.nn.zero_fraction(self._R)
+env = simple_env.Simple(3)
 agent = KADP(env)
 check_op = tf.add_check_numerics_ops() 
 merged = tf.merge_all_summaries()
@@ -282,7 +291,7 @@ if tf.gfile.Exists(FLAGS.summary_dir):
 train_writer = tf.train.SummaryWriter(FLAGS.summary_dir + '/train',sess.graph)
 sess.run(tf.initialize_all_variables())
 cur_time = time.clock()
-epsilon = .1
+epsilon = 1.0
 
 cumloss = 0
 cumgrads = 0
@@ -312,7 +321,7 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
                 mb_s[count,:] = np.asarray([xv[xi,yi],yv[xi,yi]])
                 count +=1
         mb_s[:] = simple_env.decode(mb_s)
-        mb_a = sess.run(agent.action,feed_dict={agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s})
+        mb_a = sess.run(agent.action,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s})
         for j in range(mb_dim):
             sPrime,r,term = env.get_transition(mb_s[j],mb_a[j])
             mb_sPrime[j,:] = sPrime
@@ -321,7 +330,7 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
     elif cond == 1:
         for j in range(mb_dim):
             mb_s[j,:] = env.observation_space.sample().astype(np.float32)
-        mb_a = sess.run(agent.action,feed_dict={agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s})
+        mb_a = sess.run(agent.action,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s})
         for j in range(mb_dim):
             sPrime,r,term = env.get_transition(mb_s[j],mb_a[j])
             mb_sPrime[j,:] = sPrime
@@ -338,7 +347,7 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
             if np.random.rand() < epsilon:
                 mb_a[j] = np.random.randint(agent.n_actions)
             else:
-                mb_a[j] = sess.run(agent.action,feed_dict={agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:np.expand_dims(mb_s[j],0)})[0]
+                mb_a[j] = sess.run(agent.action,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:np.expand_dims(mb_s[j],0)})[0]
             sPrime,r,term,_ = env.step(mb_a[j])
             mb_sPrime[j,:] = sPrime
             mb_r[j] = r
@@ -347,10 +356,12 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
 get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
 plt.ion()
 max_gamma = .9
-gamma_anneal = 1 #int(1e4)
-gamma = np.linspace(0,max_gamma,gamma_anneal).astype(np.float32)
+gamma_anneal = 0 #int(1e4)
+if gamma_anneal > 0:
+    gamma = np.linspace(0,max_gamma,gamma_anneal).astype(np.float32)
 cumr = 0
 cumprob = 0
+train = False
 def softmax(x,dim=-1):
     ex = np.exp(x)
     denom = np.expand_dims(np.sum(ex,dim),dim)
@@ -360,14 +371,20 @@ for i in range(num_steps):
         cur_gamma =gamma[i]
     else:
         cur_gamma = max_gamma
-    summary,_,cur_grads,cur_loss,zero_frac,max_prob = sess.run([merged,agent.train_q,agent.get_grads,agent.q_loss,agent.zero_fraction,agent.max_prob],
-            feed_dict={agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
-    train_writer.add_summary(summary)
-    cumprob += max_prob
-    cumgrads += cur_grads
-    cumloss += cur_loss
+    if train:
+        summary,_,cur_grads,cur_loss,max_prob = sess.run([merged,agent.train_q,agent.get_grads,agent.q_loss,agent.max_prob],
+                feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
+        train_writer.add_summary(summary)
+        cumprob += max_prob
+        cumgrads += cur_grads
+        cumloss += cur_loss
+    else:
+        cumprob += 0
+        cumgrads += 0
+        cumloss += 0
     if i % refresh == 0:
-        mb_q_values,mb_values,mb_actions,values,val_diff = sess.run([agent.q_val,agent.val,agent.action,agent.V_view,agent.val_diff],feed_dict={agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s}) 
+        mb_q_values,mb_values,mb_actions,values,val_diff,embed,mb_embed,zero_frac = sess.run([agent.q_val,agent.val,agent.action,agent.V_view,agent.val_diff,agent.embed(agent.SPrime_view),agent.embed(mb_s),agent.zero_fraction]
+                ,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s}) 
         '''inferred values'''
         plt.figure(1)
         plt.clf()
@@ -387,8 +404,7 @@ for i in range(num_steps):
         else:
             assert np.all(np.max(mb_q_values,0) == mb_values)
         assert np.all(np.argmax(mb_q_values,0) == mb_actions)
-        print('net reward stats: ',np.sum(agent.R,1))
-        print('mb value stats: ',np.sum(mb_q_values,1))
+        print('net reward stats: ',np.sum(agent.R,1),' mb value stats: ',np.sum(mb_q_values,1),'mb action stats: ',np.histogram(mb_actions,np.arange(agent.n_actions+1))[0])
         for action in range(agent.n_actions):
             mask = np.argmax(mb_q_values,0) == action
             #plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size*mask/2+10)#,c=((mb_q_values[action]-mb_values)))
@@ -405,6 +421,18 @@ for i in range(num_steps):
         Xs = mem_latent[:,0]
         Ys = mem_latent[:,1]
         plt.scatter(Xs,Ys,s=100,c=np.log(values))
+        if agent.z_dim == 2:
+            '''model's viewpoint'''
+            '''
+            mb_values,mb_embed = sess.run([agent.val,agent.embed(mb_sPrime)]
+                    ,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_sPrime}) 
+            '''
+            plt.figure(3)
+            plt.clf()
+            plt.scatter(mb_embed[:,0],mb_embed[:,1],s=bub_size,c=np.log(mb_values))
+            plt.figure(4)
+            plt.clf()
+            plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=np.log(values))
         plt.pause(.01)
         '''test performance'''
         get_mb(2,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)

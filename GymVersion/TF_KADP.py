@@ -1,14 +1,14 @@
+import tensorflow as tf
+sess = tf.Session()
+from ops import *
 import time
 import numpy as np
-import tensorflow as tf
 np.random.seed(111)
 #tf.set_random_seed(111)
 print(np.random.rand())
-sess = tf.Session()
 foo = sess.run(tf.random_uniform((1,)))
 print('hi',foo)
 import simple_env
-from ops import *
 from matplotlib import pyplot as plt
 from scipy.spatial.distance import cdist,pdist
 def get_shape_info(x):
@@ -22,21 +22,19 @@ def get_shape_info(x):
 
 class KADP(object):
     def make_network(self,inp,scope='network',tied=False):
-        initial = tf.contrib.layers.xavier_initializer()
-        #initial = orthogonal_initializer()
+        #initial = tf.contrib.layers.xavier_initializer()
+        initial = orthogonal_initializer()
         with tf.variable_scope(scope,reuse=tied):
-            #hid = linear(inp,self.hid_dim,'hid1',tf.nn.relu,init=initial)
-            #hid = linear(hid,self.hid_dim,'hid2',tf.nn.relu)
-            #last_hid = linear(hid,self.z_dim,'hid3',init=initial)
-            last_hid = linear(inp,self.z_dim,'hid1')
+            hid = linear(inp,self.hid_dim,'hid1',tf.nn.relu,init=initial)
+            hid = linear(hid,self.hid_dim,'hid2',tf.nn.relu,init=initial)
+            last_hid = linear(hid,self.z_dim,'hid3',init=initial)
+            #last_hid = linear(inp,self.z_dim,'hid1')
         if not tied: #only want to do this once
             with tf.variable_scope('network',reuse=True):
                 self.net_weights = tf.get_variable('hid1/W')
                 tf.histogram_summary('hid1',tf.get_variable('hid1/W'))
-                '''
                 tf.histogram_summary('hid2',tf.get_variable('hid2/W'))
                 tf.histogram_summary('hid3',tf.get_variable('hid3/W'))
-                '''
         last_hid = tf.check_numerics(last_hid,'fuck net')
         return last_hid
     def embed(self,obs):
@@ -151,15 +149,15 @@ class KADP(object):
     def __init__(self,env,W_and_NNI = None):
         self.net_exists = False
         self.n_actions = env.action_space.n
-        self.samples_per_action = 100
-        self.k = 100
+        self.samples_per_action = 400
+        self.k = 400
         self.n_samples = self.n_actions*self.samples_per_action
         #for converting inds for a particular action to row inds
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = 2
-        self.z_dim = 2
-        self.b = 1
+        self.z_dim = 64
+        self.b = .01
         self.hid_dim = 64
         self.lr = 1e-4
         self.softmax = False
@@ -361,7 +359,7 @@ if gamma_anneal > 0:
     gamma = np.linspace(0,max_gamma,gamma_anneal).astype(np.float32)
 cumr = 0
 cumprob = 0
-train = False
+train = True
 def softmax(x,dim=-1):
     ex = np.exp(x)
     denom = np.expand_dims(np.sum(ex,dim),dim)
@@ -382,15 +380,13 @@ for i in range(num_steps):
         cumprob += 0
         cumgrads += 0
         cumloss += 0
+    print(i)
     if i % refresh == 0:
         mb_q_values,mb_values,mb_actions,values,val_diff,embed,mb_embed,zero_frac = sess.run([agent.q_val,agent.val,agent.action,agent.V_view,agent.val_diff,agent.embed(agent.SPrime_view),agent.embed(mb_s),agent.zero_fraction]
                 ,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s}) 
         '''inferred values'''
         plt.figure(1)
         plt.clf()
-        axes = plt.gca()
-        axes.set_xlim([-env.limit,env.limit])
-        axes.set_ylim([-env.limit,env.limit])
         mb_latent = simple_env.encode(mb_s)
         Xs = mb_latent[:,0]
         Ys = mb_latent[:,1]
@@ -402,7 +398,7 @@ for i in range(num_steps):
             val = np.sum(softmax(mb_q_values,0)*mb_q_values,0)
             assert np.all(np.abs(val -  mb_values) <1e-6), print(val-mb_values,np.concatenate([[val],[mb_values]]))
         else:
-            assert np.all(np.max(mb_q_values,0) == mb_values)
+            assert np.all(np.abs(np.max(mb_q_values,0) -mb_values) < 1e-6), print(np.max(mb_q_values,0)-mb_values) 
         assert np.all(np.argmax(mb_q_values,0) == mb_actions)
         print('net reward stats: ',np.sum(agent.R,1),' mb value stats: ',np.sum(mb_q_values,1),'mb action stats: ',np.histogram(mb_actions,np.arange(agent.n_actions+1))[0])
         for action in range(agent.n_actions):
@@ -410,17 +406,20 @@ for i in range(num_steps):
             #plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size*mask/2+10)#,c=((mb_q_values[action]-mb_values)))
             plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
         plt.scatter(Xs,Ys,s=bub_size,c=np.log(mb_values))
-        plt.hold(False)
-        '''database values'''
-        plt.figure(2)
-        plt.clf()
         axes = plt.gca()
         axes.set_xlim([-env.limit,env.limit])
         axes.set_ylim([-env.limit,env.limit])
+        plt.hold(False)
+        '''database values'''
+        fig = plt.figure(2)
+        plt.clf()
         mem_latent = simple_env.encode(agent.SPrime_view)
         Xs = mem_latent[:,0]
         Ys = mem_latent[:,1]
         plt.scatter(Xs,Ys,s=100,c=np.log(values))
+        axes = fig.gca()
+        axes.set_xlim([-env.limit,env.limit])
+        axes.set_ylim([-env.limit,env.limit])
         if agent.z_dim == 2:
             '''model's viewpoint'''
             '''
@@ -433,17 +432,26 @@ for i in range(num_steps):
             plt.figure(4)
             plt.clf()
             plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=np.log(values))
-        plt.pause(.01)
         '''test performance'''
+        epsilon = .1
         get_mb(2,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
+        epsilon = 1
+        plt.figure(5)
+        plt.clf()
+        test_latent = simple_env.encode(mb_s)
+        plt.scatter(test_latent[:,0],test_latent[:,1],s=bub_size)
+        axes = plt.gca()
+        axes.set_xlim([-env.limit,env.limit])
+        axes.set_ylim([-env.limit,env.limit])
         print(val_diff,cumprob/refresh,zero_frac,cur_gamma,1/(mb_r.sum()/mb_dim+1e-10),'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
         cumr = 0
         cumprob = 0
         cur_time = time.clock()
         cumloss = 0
         cumgrads = 0
-        '''testing'''
-        agent.gen_data(env)
+        plt.pause(.01)
+    '''testing'''
+    agent.gen_data(env)
 
     if agent.change_actions:
         get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)

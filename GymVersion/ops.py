@@ -1,5 +1,5 @@
-import numpy as np
 import tensorflow as tf
+import numpy as np
 def orthogonal_initializer(scale = 1.1):
     ''' From Lasagne and Keras. Reference: Saxe et al., http://arxiv.org/abs/1312.6120
     '''
@@ -21,7 +21,6 @@ def compute_return(rewards,gamma):
     for t in reversed(range(length)):
         R[:t+1] = R[:t+1]*gamma + rewards[t]
     return list(R)
-import tensorflow as tf
 def linear(in_,out_dim,name,activation_fn=None,bias=True,bias_value=None,init=orthogonal_initializer(),tied=False):
     if in_.__class__ == tf.Tensor:
         in_dim = in_.get_shape()[1]

@@ -104,6 +104,22 @@ class KADP(object):
     def _norm(self,inp):
         #return tf.nn.softmax(inp)
         return inp/tf.reduce_sum(inp,-1,keep_dims=True)
+    def _get_reward(self,inp,a=None):
+        if a == None:
+            S_ = self._S
+            weights,inds = self.kernel(inp,S_)
+        else:
+            S_ = tf.gather(self._S,a)
+            weights,inds = self.kernel(inp,S_,minibatch=True)
+        normed_weights = self._norm(weights)
+        if a == None:
+            row_inds = self.row_offsets+inds
+            R_ = tf.gather(self._R_view,row_inds)
+        else:
+            R_ = tf.gather(self._R,a)
+        r = tf.reduce_sum(normed_weights*(R_),-1)
+        return r
+        
     def _get_value(self,inp):
         q_vals = self._get_q(inp) 
         if self.softmax:
@@ -204,7 +220,7 @@ class KADP(object):
         inds = self.NNI
         R_ = tf.gather(self._R_view,inds)
         NT_ = tf.gather(self._NT_view,inds)
-        for t in range(32):
+        for t in range(1):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.softmax:
@@ -223,6 +239,7 @@ class KADP(object):
         '''
         self.val,self.action = self._get_value(self._s)
         self.q_val = self._get_q(self._s)
+        self.r_val = self._get_reward(self._s)
         '''TD graph
             feed: _s,_r,_sPrime,_nt
             ops: train_step,get_grads,loss

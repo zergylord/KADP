@@ -156,7 +156,7 @@ class KADP(object):
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = 2
-        self.z_dim = 64
+        self.z_dim = 32
         self.b = .01
         self.hid_dim = 64
         self.lr = 1e-4
@@ -244,7 +244,7 @@ class KADP(object):
             self.q_loss = tf.check_numerics(self.q_loss,'fuck q loss')
             optim = tf.train.AdamOptimizer(self.lr)
             grads_and_vars = optim.compute_gradients(self.q_loss)
-            capped_grads_and_vars = [(tf.clip_by_value(gv[0],-100,100),gv[1]) for gv in grads_and_vars]
+            capped_grads_and_vars = [(tf.clip_by_value(gv[0],-.1,.1),gv[1]) for gv in grads_and_vars]
             grad_summaries = [tf.histogram_summary('poo'+v.name,g) if g is not None else '' for g,v in grads_and_vars]
             self.train_q = optim.apply_gradients(capped_grads_and_vars)
             '''reward and statePred training graph
@@ -380,7 +380,6 @@ for i in range(num_steps):
         cumprob += 0
         cumgrads += 0
         cumloss += 0
-    print(i)
     if i % refresh == 0:
         mb_q_values,mb_values,mb_actions,values,val_diff,embed,mb_embed,zero_frac = sess.run([agent.q_val,agent.val,agent.action,agent.V_view,agent.val_diff,agent.embed(agent.SPrime_view),agent.embed(mb_s),agent.zero_fraction]
                 ,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s}) 

@@ -14,7 +14,6 @@ class ObservationSpace(object):
 def odd_root(x,n=3):
     return np.power(abs(x),float(1)/n)*np.sign(x)
 n = 3
-'''
 def encode(obs):
     return odd_root(obs*Simple.limit**n,n)
 def decode(s):
@@ -24,6 +23,7 @@ def encode(obs):
     return obs*Simple.limit
 def decode(s):
     return s/Simple.limit
+'''
 '''
 M = np.random.randn(2,2)
 b = np.random.randn(2)*0

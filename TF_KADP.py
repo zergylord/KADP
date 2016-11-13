@@ -1,15 +1,6 @@
 import tensorflow as tf
-sess = tf.Session()
-from ops import *
-import time
+from Utils.ops import *
 import numpy as np
-np.random.seed(111)
-#tf.set_random_seed(111)
-print(np.random.rand())
-foo = sess.run(tf.random_uniform((1,)))
-print('hi',foo)
-import simple_env
-from matplotlib import pyplot as plt
 from scipy.spatial.distance import cdist,pdist
 def get_shape_info(x):
     if x.__class__ == tf.Tensor:
@@ -60,7 +51,7 @@ class KADP(object):
             print('this shouldnt happen...')
         return s
 
-    def kernel(self,o1,o2,k=None,minibatch=False):
+    def kernel(self,o1,o2,mother='dot',k=None,minibatch=False):
         if k == None:
             k = self.k
         x1 = self.embed(o1)
@@ -88,22 +79,24 @@ class KADP(object):
             x1 = tf.expand_dims(tf.expand_dims(x1,1),0)
             '''x2 always has the first dim'''
             x2 = tf.expand_dims(x2,1)
-        '''Gauassian'''
-        x1 = tf.check_numerics(x1,'fuck x1')
-        x2 = tf.check_numerics(x2,'fuck x2')
-        sim = tf.exp(-tf.reduce_sum(tf.square(x2-x1),-1)/self.b)
-        sim = tf.check_numerics(sim,'fuck sim')
-        '''dot-product'''
-        '''
-        inv_mag = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(x2),-1,keep_dims=True),eps,float("inf")))
-        sim = tf.squeeze(tf.reduce_sum(x2*x1,-1,keep_dims=True)*inv_mag)
-        '''
+        if mother == 'rbf':
+            '''Gauassian'''
+            x1 = tf.check_numerics(x1,'fuck x1')
+            x2 = tf.check_numerics(x2,'fuck x2')
+            sim = tf.exp(-tf.reduce_sum(tf.square(x2-x1),-1)/self.b)
+            sim = tf.check_numerics(sim,'fuck sim')
+        elif mother == 'dot':
+            '''dot-product'''
+            inv_mag1 = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(x1),-1,keep_dims=True),eps,float("inf")))
+            inv_mag2 = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(x2),-1,keep_dims=True),eps,float("inf")))
+            sim = tf.squeeze(tf.reduce_sum(x2*x1,-1,keep_dims=True)*inv_mag1*inv_mag2)
         k_sim,k_inds = tf.nn.top_k(sim,k=k,sorted=False)
 
         return k_sim,k_inds
     def _norm(self,inp):
         #return tf.nn.softmax(inp)
-        return inp/tf.reduce_sum(inp,-1,keep_dims=True)
+        #return inp/tf.reduce_sum(inp,-1,keep_dims=True)
+        return (inp+1)/tf.reduce_sum(inp+1,-1,keep_dims=True)
     def _get_reward(self,inp,a=None):
         if a == None:
             S_ = self._S
@@ -122,8 +115,10 @@ class KADP(object):
         
     def _get_value(self,inp):
         q_vals = self._get_q(inp) 
-        if self.softmax:
+        if self.max_cond == 1:
             val = tf.reduce_sum(tf.nn.softmax(q_vals,dim=0)*q_vals,0)
+        elif self.max_cond == 2:
+            val = tf.reduce_mean(q_vals,0)
         else:
             val = tf.reduce_max(q_vals,0)
         action = tf.argmax(q_vals,0) #this is wasteful!
@@ -172,11 +167,11 @@ class KADP(object):
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = 2
-        self.z_dim = 32
+        self.z_dim = 64
         self.b = .01
-        self.hid_dim = 64
-        self.lr = 1e-4
-        self.softmax = False
+        self.hid_dim = 256
+        self.lr = 1e-3
+        self.max_cond = 3 #1 softmax,2 mean, 3+ max
         self.change_actions = True
         ''' all placeholders'''
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
@@ -220,11 +215,13 @@ class KADP(object):
         inds = self.NNI
         R_ = tf.gather(self._R_view,inds)
         NT_ = tf.gather(self._NT_view,inds)
-        for t in range(1):
+        for t in range(30):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
-            if self.softmax:
+            if self.max_cond == 1:
                 V.append(tf.reduce_sum(tf.nn.softmax(q_vals,dim=0)*q_vals,0))
+            elif self.max_cond == 2:
+                V.append(tf.reduce_mean(q_vals,0))
             else:
                 V.append(tf.reduce_max(q_vals,0))
         #V = tf.Print(V,[V[-1]],'poo')
@@ -256,12 +253,15 @@ class KADP(object):
             '''
             self.q = self._get_q(self._s,self._a)
             self.q = tf.check_numerics(self.q,'fuck q')
-            self.target_q = tf.stop_gradient(self._r+self._nt*self._gamma*self._get_value(self._sPrime)[0])
+            self.target_val = tf.placeholder(tf.float32,[None,])
+            self.target_q = tf.stop_gradient(self._r+self._nt*self._gamma*self.target_val)
             self.q_loss = tf.reduce_mean(tf.square(self.target_q - self.q))
+            tf.scalar_summary('q loss',self.q_loss)
             self.q_loss = tf.check_numerics(self.q_loss,'fuck q loss')
             optim = tf.train.AdamOptimizer(self.lr)
             grads_and_vars = optim.compute_gradients(self.q_loss)
-            capped_grads_and_vars = [(tf.clip_by_value(gv[0],-.1,.1),gv[1]) for gv in grads_and_vars]
+            capped_grads_and_vars = grads_and_vars
+            #capped_grads_and_vars = [(tf.clip_by_value(gv[0],-.1,.1),gv[1]) for gv in grads_and_vars]
             grad_summaries = [tf.histogram_summary('poo'+v.name,g) if g is not None else '' for g,v in grads_and_vars]
             self.train_q = optim.apply_gradients(capped_grads_and_vars)
             '''reward and statePred training graph
@@ -285,192 +285,18 @@ class KADP(object):
             dot = tf.square(target_s*pred_s)
             self.s_loss = tf.reduce_sum(self._nt*mse)/tf.reduce_sum(self._nt)
             self.r_loss = tf.reduce_mean(tf.reduce_sum(tf.square(self._r-r),1))
+            tf.scalar_summary('reward loss',self.r_loss)
             self.super_loss = self.r_loss #+self.s_loss
             self.train_supervised = tf.train.AdamOptimizer(self.lr).minimize(self.super_loss)
             '''
             pred_s = tf.gather(self.W[0],row_inds)
             next_inds = tf.gather(self.NNI[0],row_inds)
             '''
+            '''Return based training graph (MC supervised)
+                feed:_s,_a,_r AS RETURN,_nt
+                op: train_return
+            '''
+            self.train_return = tf.train.AdamOptimizer(self.lr).minimize(self.r_loss)
         self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,self.net_weights),-1))
         self.zero_fraction = tf.nn.zero_fraction(self._R)
-env = simple_env.Simple(3)
-agent = KADP(env)
-check_op = tf.add_check_numerics_ops() 
-merged = tf.merge_all_summaries()
-flags = tf.app.flags
-FLAGS = flags.FLAGS
-flags.DEFINE_string('summary_dir', '/tmp/kadp', 'Summaries directory')
-if tf.gfile.Exists(FLAGS.summary_dir):
-    tf.gfile.DeleteRecursively(FLAGS.summary_dir)
-    tf.gfile.MakeDirs(FLAGS.summary_dir)
-train_writer = tf.train.SummaryWriter(FLAGS.summary_dir + '/train',sess.graph)
-sess.run(tf.initialize_all_variables())
-cur_time = time.clock()
-epsilon = 1.0
-
-cumloss = 0
-cumgrads = 0
-num_steps = int(1e8)
-refresh = int(1e2)
-mb_cond = 1
-if mb_cond == 0:
-    mb_dim = 100
-else:
-    mb_dim = 100
-mb_s = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
-mb_a = np.zeros((mb_dim,),dtype=np.int32)
-mb_sPrime = np.zeros((mb_dim,agent.s_dim),dtype=np.float32)
-mb_r = np.zeros((mb_dim,1),dtype=np.float32)
-mb_nt = np.zeros((mb_dim,1),dtype=np.float32)
-#a = env.action_space.sample()
-cur_gamma = 0.0
-def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt):
-    if cond == 0:
-        side = int(np.sqrt(mb_dim))
-        x = np.linspace(-env.limit,env.limit,side)
-        y = np.linspace(env.limit,-env.limit,side)
-        xv, yv = np.meshgrid(x,y)
-        count = 0
-        for xi in range(side):
-            for yi in range(side):
-                mb_s[count,:] = np.asarray([xv[xi,yi],yv[xi,yi]])
-                count +=1
-        mb_s[:] = simple_env.decode(mb_s)
-        mb_a = sess.run(agent.action,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s})
-        for j in range(mb_dim):
-            sPrime,r,term = env.get_transition(mb_s[j],mb_a[j])
-            mb_sPrime[j,:] = sPrime
-            mb_r[j] = r
-            mb_nt[j] = not term
-    elif cond == 1:
-        for j in range(mb_dim):
-            mb_s[j,:] = env.observation_space.sample().astype(np.float32)
-        mb_a = sess.run(agent.action,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s})
-        for j in range(mb_dim):
-            sPrime,r,term = env.get_transition(mb_s[j],mb_a[j])
-            mb_sPrime[j,:] = sPrime
-            mb_r[j] = r
-            mb_nt[j] = not term
-    elif cond == 2:
-        mb_s[0,:] = env.reset()
-        for j in range(mb_dim):
-            if j > 0:
-                if term:
-                    mb_s[j,:] = env.reset()
-                else:
-                    mb_s[j,:] = sPrime
-            if np.random.rand() < epsilon:
-                mb_a[j] = np.random.randint(agent.n_actions)
-            else:
-                mb_a[j] = sess.run(agent.action,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:np.expand_dims(mb_s[j],0)})[0]
-            sPrime,r,term,_ = env.step(mb_a[j])
-            mb_sPrime[j,:] = sPrime
-            mb_r[j] = r
-            mb_nt[j] = not term
-
-get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
-plt.ion()
-max_gamma = .9
-gamma_anneal = 0 #int(1e4)
-if gamma_anneal > 0:
-    gamma = np.linspace(0,max_gamma,gamma_anneal).astype(np.float32)
-cumr = 0
-cumprob = 0
-train = True
-def softmax(x,dim=-1):
-    ex = np.exp(x)
-    denom = np.expand_dims(np.sum(ex,dim),dim)
-    return ex/denom
-for i in range(num_steps):
-    if i < gamma_anneal:
-        cur_gamma =gamma[i]
-    else:
-        cur_gamma = max_gamma
-    if train:
-        summary,_,cur_grads,cur_loss,max_prob = sess.run([merged,agent.train_q,agent.get_grads,agent.q_loss,agent.max_prob],
-                feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
-        train_writer.add_summary(summary)
-        cumprob += max_prob
-        cumgrads += cur_grads
-        cumloss += cur_loss
-    else:
-        cumprob += 0
-        cumgrads += 0
-        cumloss += 0
-    if i % refresh == 0:
-        mb_q_values,mb_values,mb_actions,values,val_diff,embed,mb_embed,zero_frac = sess.run([agent.q_val,agent.val,agent.action,agent.V_view,agent.val_diff,agent.embed(agent.SPrime_view),agent.embed(mb_s),agent.zero_fraction]
-                ,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s}) 
-        '''inferred values'''
-        plt.figure(1)
-        plt.clf()
-        mb_latent = simple_env.encode(mb_s)
-        Xs = mb_latent[:,0]
-        Ys = mb_latent[:,1]
-        offX = .5*env.radius*np.cos(env.rad_inc*np.arange(agent.n_actions))
-        offY = .5*env.radius*np.sin(env.rad_inc*np.arange(agent.n_actions))
-        plt.hold(True)
-        bub_size = 100
-        if agent.softmax:
-            val = np.sum(softmax(mb_q_values,0)*mb_q_values,0)
-            assert np.all(np.abs(val -  mb_values) <1e-6), print(val-mb_values,np.concatenate([[val],[mb_values]]))
-        else:
-            assert np.all(np.abs(np.max(mb_q_values,0) -mb_values) < 1e-6), print(np.max(mb_q_values,0)-mb_values) 
-        assert np.all(np.argmax(mb_q_values,0) == mb_actions)
-        print('net reward stats: ',np.sum(agent.R,1),' mb value stats: ',np.sum(mb_q_values,1),'mb action stats: ',np.histogram(mb_actions,np.arange(agent.n_actions+1))[0])
-        for action in range(agent.n_actions):
-            mask = np.argmax(mb_q_values,0) == action
-            #plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size*mask/2+10)#,c=((mb_q_values[action]-mb_values)))
-            plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
-        plt.scatter(Xs,Ys,s=bub_size,c=np.log(mb_values))
-        axes = plt.gca()
-        axes.set_xlim([-env.limit,env.limit])
-        axes.set_ylim([-env.limit,env.limit])
-        plt.hold(False)
-        '''database values'''
-        fig = plt.figure(2)
-        plt.clf()
-        mem_latent = simple_env.encode(agent.SPrime_view)
-        Xs = mem_latent[:,0]
-        Ys = mem_latent[:,1]
-        plt.scatter(Xs,Ys,s=100,c=np.log(values))
-        axes = fig.gca()
-        axes.set_xlim([-env.limit,env.limit])
-        axes.set_ylim([-env.limit,env.limit])
-        if agent.z_dim == 2:
-            '''model's viewpoint'''
-            '''
-            mb_values,mb_embed = sess.run([agent.val,agent.embed(mb_sPrime)]
-                    ,feed_dict={agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_sPrime}) 
-            '''
-            plt.figure(3)
-            plt.clf()
-            plt.scatter(mb_embed[:,0],mb_embed[:,1],s=bub_size,c=np.log(mb_values))
-            plt.figure(4)
-            plt.clf()
-            plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=np.log(values))
-        '''test performance'''
-        epsilon = .1
-        get_mb(2,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
-        epsilon = 1
-        plt.figure(5)
-        plt.clf()
-        test_latent = simple_env.encode(mb_s)
-        plt.scatter(test_latent[:,0],test_latent[:,1],s=bub_size)
-        axes = plt.gca()
-        axes.set_xlim([-env.limit,env.limit])
-        axes.set_ylim([-env.limit,env.limit])
-        print(val_diff,cumprob/refresh,zero_frac,cur_gamma,1/(mb_r.sum()/mb_dim+1e-10),'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
-        cumr = 0
-        cumprob = 0
-        cur_time = time.clock()
-        cumloss = 0
-        cumgrads = 0
-        plt.pause(.01)
-    '''testing'''
-    agent.gen_data(env)
-
-    if agent.change_actions:
-        get_mb(mb_cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt)
-        if mb_cond == 2:
-            cumr += mb_r.sum()
 

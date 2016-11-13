@@ -35,7 +35,7 @@ def decode(s):
     return np.dot(s,W)+d
 '''
 class Simple(object):
-    radius = .25
+    radius = .5 #.25
     limit = 4
     @staticmethod
     def _new_state():
@@ -61,7 +61,7 @@ class Simple(object):
         assert np.all(s>=-4),s[s<-4]
         assert np.all(s<=4),s[s>4]
         sPrime =  s + np.asarray([self.radius*np.cos(self.rad_inc*a),self.radius*np.sin(self.rad_inc*a)])
-        sPrime += np.random.randn(2)*self.radius*.1
+        #sPrime += np.random.randn(2)*self.radius*.1
         '''walls'''
         cross_hor_half = (s[1] < 0 and sPrime[1] > 0) or (s[1] > 0 and sPrime[1] < 0)
         cross_vert_half = (s[0] < 0 and sPrime[0] > 0) or (s[0] > 0 and sPrime[0] < 0)
@@ -72,9 +72,13 @@ class Simple(object):
             r = 0
             term = False
         else:
-            sPrime[sPrime > self.limit] = self.limit
-            sPrime[sPrime < -self.limit] = -self.limit
-            r,term = self.get_reward(sPrime)
+            if np.any(sPrime > self.limit) or np.any(sPrime < -self.limit):
+                sPrime[sPrime > self.limit] = self.limit
+                sPrime[sPrime < -self.limit] = -self.limit
+                term = True
+                r = -1
+            else:
+                r,term = self.get_reward(sPrime)
             sPrime = decode(sPrime)
         return sPrime,r,term
     def step(self,a):    

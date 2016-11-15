@@ -17,14 +17,14 @@ class KADP(object):
         initial = orthogonal_initializer()
         with tf.variable_scope(scope,reuse=tied):
             hid = linear(inp,self.hid_dim,'hid1',tf.nn.relu,init=initial)
-            hid = linear(hid,self.hid_dim,'hid2',tf.nn.relu,init=initial)
+            #hid = linear(hid,self.hid_dim,'hid2',tf.nn.relu,init=initial)
             last_hid = linear(hid,self.z_dim,'hid3',init=initial)
             #last_hid = linear(inp,self.z_dim,'hid1')
         if not tied: #only want to do this once
             with tf.variable_scope('network',reuse=True):
                 self.net_weights = tf.get_variable('hid1/W')
                 tf.histogram_summary('hid1',tf.get_variable('hid1/W'))
-                tf.histogram_summary('hid2',tf.get_variable('hid2/W'))
+                #tf.histogram_summary('hid2',tf.get_variable('hid2/W'))
                 tf.histogram_summary('hid3',tf.get_variable('hid3/W'))
         last_hid = tf.check_numerics(last_hid,'fuck net')
         return last_hid
@@ -161,6 +161,7 @@ class KADP(object):
                 self.SPrime[a,i] = sPrime
                 self.R[a,i] = r
                 self.NT[a,i] = np.float32(not term)
+        for a in range(self.n_actions):
             for i in range(self.n_samples):
                 #for oracle
                 _,self.RPrime[a,i],_ = env.get_transition(self.SPrime_view[i],a)
@@ -176,10 +177,10 @@ class KADP(object):
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = 2
-        self.z_dim = 64
+        self.z_dim = 2
         self.b = .01
         self.hid_dim = 256
-        self.lr = 1e-4
+        self.lr = 1e-3
         self.max_cond = 2 #1 softmax,2 mean, 3+ max
         self.change_actions = True
         ''' all placeholders'''
@@ -229,8 +230,7 @@ class KADP(object):
         print(self.row_offsets.shape)
         R_ = tf.gather(self._R_view,inds)
         NT_ = tf.gather(self._NT_view,inds)
-        '''
-        for t in range(1):
+        for t in range(10):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.max_cond == 1:
@@ -240,6 +240,7 @@ class KADP(object):
             else:
                 V.append(tf.reduce_max(q_vals,0))
         self.V_view= V[-1]
+        self.val_diff = tf.reduce_sum(tf.square(V[-1]-V[-2]))
         '''
         def loop_func(V,count):
             V_ = tf.gather(V,inds)
@@ -255,13 +256,10 @@ class KADP(object):
                 ret = tf.reduce_max(q_vals,0)
             ret.set_shape((self.n_samples,))
             return (ret,count+1)
-        '''
-        def loop_func(V,count):
-            return (V,count+1)
-        '''
-        cond = lambda V,count: count<100
+        cond = lambda V,count: count<15
         self.V_view,_ = tf.while_loop(cond,loop_func,[tf.zeros((self.n_samples,),dtype=tf.float32),tf.constant(0)])
-        self.val_diff = tf.no_op()#tf.reduce_sum(tf.square(V[-1]-V[-2]))
+        self.val_diff = tf.no_op()
+        '''
         self.V_view = tf.check_numerics(self.V_view,'foobar')
         #self.V_view= tf.reduce_mean(tf.pack(V),0)
         self.V = tf.reshape(self.V_view,[self.n_actions,self.samples_per_action])

@@ -141,7 +141,7 @@ for i in range(num_steps):
     else:
         cur_epsilon = min_epsilon
     if i % target_refresh == 0:
-        agent.gen_data(env)
+        #agent.gen_data(env)
         target_V = sess.run(agent.V_view,feed_dict={agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma})
     if train:
         if D_full:
@@ -188,9 +188,13 @@ for i in range(num_steps):
         for a in range(agent.n_actions):
             for s in range(mb_dim):
                 _,real_r[a,s],_ = env.get_transition(mb_s[s],a)
+        '''
+        plt.figure(10)
+        plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1],s=100,c=agent.RPrime.max(0))
+        '''
         mb_q_values,mb_values,mb_actions,values,val_diff,embed,mb_embed,zero_frac \
             = sess.run([agent.q_val,agent.val,agent.action,agent.V_view,
-            agent.val_diff,agent.embed(agent.SPrime_view),agent.embed(mb_s),agent.zero_fraction]
+            agent.val_diff,agent.embed(agent.SPrime_view),agent.embed(mb_sPrime),agent.zero_fraction]
             ,feed_dict={agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT
             ,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view
             ,agent._gamma:cur_gamma,agent._s:mb_s,agent._real_r:real_r}) 
@@ -230,10 +234,10 @@ for i in range(num_steps):
             '''model's viewpoint'''
             plt.figure(3)
             plt.clf()
-            plt.scatter(mb_embed[:,0],mb_embed[:,1],s=bub_size,c=np.log(mb_values))
+            plt.scatter(mb_embed[:,0],mb_embed[:,1],s=bub_size,c=mb_values)
             plt.figure(4)
             plt.clf()
-            plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=np.log(values))
+            plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=values)
         if mb_cond != 2:
             '''test performance'''
             cur_epsilon = .1

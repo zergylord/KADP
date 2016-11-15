@@ -24,6 +24,12 @@ def encode(obs):
     return obs*Simple.limit
 def decode(s):
     return s/Simple.limit
+num_cells = 8
+def state2vec(s):
+    one_hot = np.zeros(num_cells*2)
+    one_hot[int(s[0])] = 1
+    one_hot[num_cells-1+int(s[0])] = 1
+    return one_hot
 '''
 M = np.random.randn(2,2)
 b = np.random.randn(2)*0

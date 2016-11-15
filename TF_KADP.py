@@ -51,9 +51,8 @@ class KADP(object):
             print('this shouldnt happen...')
         return s
 
-    def kernel(self,o1,o2,mother='dot',k=None,minibatch=False):
-        if k == None:
-            k = self.k
+    def kernel(self,o1,o2,mother='dot',minibatch=False):
+        k = self.k
         x1 = self.embed(o1)
         x2 = self.embed(o2)
         shape1,rank1 = get_shape_info(x1)
@@ -145,7 +144,13 @@ class KADP(object):
             R_ = tf.gather(self._R,a)
             NT_ = tf.gather(self._NT,a)
             V_ = tf.gather(self.V,a)
-        q_val = tf.reduce_sum(normed_weights*(R_+NT_*self._gamma*V_),-1)
+        if self.oracle:
+            if a == None:
+                q_val = self._real_r + tf.reduce_sum(normed_weights*(NT_*self._gamma*V_),-1)
+            else:
+                q_val = self._real_ra + tf.reduce_sum(normed_weights*(NT_*self._gamma*V_),-1)
+        else:
+            q_val = tf.reduce_sum(normed_weights*(R_+NT_*self._gamma*V_),-1)
         return q_val
     def gen_data(self,env):
         for a in range(self.n_actions):
@@ -156,12 +161,16 @@ class KADP(object):
                 self.SPrime[a,i] = sPrime
                 self.R[a,i] = r
                 self.NT[a,i] = np.float32(not term)
+            for i in range(self.n_samples):
+                #for oracle
+                _,self.RPrime[a,i],_ = env.get_transition(self.SPrime_view[i],a)
 
     def __init__(self,env,W_and_NNI = None):
         self.net_exists = False
         self.n_actions = env.action_space.n
         self.samples_per_action = 400
         self.k = 400
+        self.oracle = True
         self.n_samples = self.n_actions*self.samples_per_action
         #for converting inds for a particular action to row inds
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
@@ -170,22 +179,25 @@ class KADP(object):
         self.z_dim = 64
         self.b = .01
         self.hid_dim = 256
-        self.lr = 1e-3
-        self.max_cond = 3 #1 softmax,2 mean, 3+ max
+        self.lr = 1e-4
+        self.max_cond = 2 #1 softmax,2 mean, 3+ max
         self.change_actions = True
         ''' all placeholders'''
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
         self._a = tf.placeholder(tf.int32,shape=(None,))
         self._r = tf.placeholder(tf.float32,shape=(None,1,))
+        self._real_r = tf.placeholder(tf.float32,shape=(self.n_actions,None),name='real_r')
+        self._real_ra = tf.placeholder(tf.float32,shape=(None,),name='real_ra')
         self._sPrime = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
         self._nt = tf.placeholder(tf.float32,shape=(None,1,))
         self._gamma = tf.placeholder(tf.float32,shape=())
 
         self._S = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,self.s_dim))
         self._SPrime_view = tf.placeholder(tf.float32,shape=(self.n_samples,self.s_dim))
-        self._R = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,))
+        self._R = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,),name='R')
         self._R_view = tf.reshape(self._R,(-1,))
-        self._NT = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,))
+        self._RPrime = tf.placeholder(tf.float32,shape=(self.n_actions,self.n_samples,),name='RPrime')
+        self._NT = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,),name='NT')
         self._NT_view = tf.reshape(self._NT,(-1,))
         '''create dataset'''
         self.S = np.zeros((self.n_actions,self.samples_per_action,self.s_dim)).astype(np.float32())
@@ -194,6 +206,7 @@ class KADP(object):
         self.SPrime_view = self.SPrime.reshape(-1,self.s_dim)
         self.R = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
         self.R_view = self.R.reshape(-1)
+        self.RPrime = np.zeros((self.n_actions,self.n_samples)).astype(np.float32())
         self.NT = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
         self.NT_view = self.NT.reshape(-1)
         ''' these should be tensors
@@ -213,9 +226,11 @@ class KADP(object):
         self.max_prob = tf.reduce_mean(tf.reduce_max(normed_W,-1))
         V = [tf.zeros((self.n_samples,),dtype=tf.float32)]
         inds = self.NNI
+        print(self.row_offsets.shape)
         R_ = tf.gather(self._R_view,inds)
         NT_ = tf.gather(self._NT_view,inds)
-        for t in range(30):
+        '''
+        for t in range(1):
             V_ = tf.gather(V[t],inds)
             q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.max_cond == 1:
@@ -224,9 +239,29 @@ class KADP(object):
                 V.append(tf.reduce_mean(q_vals,0))
             else:
                 V.append(tf.reduce_max(q_vals,0))
-        #V = tf.Print(V,[V[-1]],'poo')
         self.V_view= V[-1]
-        self.val_diff = tf.reduce_sum(tf.square(V[-1]-V[-2]))
+        '''
+        def loop_func(V,count):
+            V_ = tf.gather(V,inds)
+            if self.oracle:
+                q_vals = self._RPrime+tf.reduce_sum(normed_W*(NT_*self._gamma*V_),-1)
+            else:
+                q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
+            if self.max_cond == 1:
+                ret = tf.reduce_sum(tf.nn.softmax(q_vals,dim=0)*q_vals,0)
+            elif self.max_cond == 2:
+                ret = tf.reduce_mean(q_vals,0)
+            else:
+                ret = tf.reduce_max(q_vals,0)
+            ret.set_shape((self.n_samples,))
+            return (ret,count+1)
+        '''
+        def loop_func(V,count):
+            return (V,count+1)
+        '''
+        cond = lambda V,count: count<100
+        self.V_view,_ = tf.while_loop(cond,loop_func,[tf.zeros((self.n_samples,),dtype=tf.float32),tf.constant(0)])
+        self.val_diff = tf.no_op()#tf.reduce_sum(tf.square(V[-1]-V[-2]))
         self.V_view = tf.check_numerics(self.V_view,'foobar')
         #self.V_view= tf.reduce_mean(tf.pack(V),0)
         self.V = tf.reshape(self.V_view,[self.n_actions,self.samples_per_action])
@@ -253,7 +288,7 @@ class KADP(object):
             '''
             self.q = self._get_q(self._s,self._a)
             self.q = tf.check_numerics(self.q,'fuck q')
-            self.target_val = tf.placeholder(tf.float32,[None,])
+            self.target_val = tf.placeholder(tf.float32,[None,],name="target_val")
             self.target_q = tf.stop_gradient(self._r+self._nt*self._gamma*self.target_val)
             self.q_loss = tf.reduce_mean(tf.square(self.target_q - self.q))
             tf.scalar_summary('q loss',self.q_loss)

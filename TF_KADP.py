@@ -177,11 +177,11 @@ class KADP(object):
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = 2
-        self.z_dim = 2
+        self.z_dim = 10
         self.b = .01
         self.hid_dim = 256
-        self.lr = 1e-3
-        self.max_cond = 2 #1 softmax,2 mean, 3+ max
+        self.lr = 1e-4
+        self.max_cond = 3 #1 softmax,2 mean, 3+ max
         self.change_actions = True
         ''' all placeholders'''
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))

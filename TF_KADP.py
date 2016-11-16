@@ -232,7 +232,10 @@ class KADP(object):
         NT_ = tf.gather(self._NT_view,inds)
         for t in range(10):
             V_ = tf.gather(V[t],inds)
-            q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
+            if self.oracle:
+                q_vals = self._RPrime+tf.reduce_sum(normed_W*(NT_*self._gamma*V_),-1)
+            else:
+                q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.max_cond == 1:
                 V.append(tf.reduce_sum(tf.nn.softmax(q_vals,dim=0)*q_vals,0))
             elif self.max_cond == 2:

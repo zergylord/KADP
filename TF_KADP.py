@@ -180,7 +180,7 @@ class KADP(object):
         self.z_dim = 10
         self.b = .01
         self.hid_dim = 256
-        self.lr = 1e-4
+        self.lr = 1e-3
         self.max_cond = 3 #1 softmax,2 mean, 3+ max
         self.change_actions = True
         ''' all placeholders'''

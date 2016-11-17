@@ -178,7 +178,11 @@ def plot_stuff():
     plt.plot(r_hist)
     plt.pause(.01)
 def log_stuff():
-    np.save('foo',r_hist)
+    np.save('r_data',r_hist)
+    mem_latent = simple_env.encode(agent.SPrime_view)
+    np.save('point_data',mem_latent)
+    np.save('val_data',values)
+    np.save('viter_data',all_V)
 for i in range(num_steps):
     if i < gamma_anneal:
         cur_gamma =gamma[i]
@@ -237,12 +241,14 @@ for i in range(num_steps):
         for a in range(agent.n_actions):
             for s in range(mb_dim):
                 _,real_r[a,s],_ = env.get_transition(mb_s[s],a)
+        feed_dict = {agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT
+            ,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view
+            ,agent._gamma:cur_gamma,agent._s:mb_s,agent._real_r:real_r}
+        all_V = sess.run(agent.all_V,feed_dict=feed_dict)
         mb_q_values,mb_values,mb_actions,values,val_diff,embed,mb_embed,zero_frac \
             = sess.run([agent.q_val,agent.val,agent.action,agent.V_view,
             agent.val_diff,agent.embed(agent.SPrime_view),agent.embed(mb_sPrime),agent.zero_fraction]
-            ,feed_dict={agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT
-            ,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view
-            ,agent._gamma:cur_gamma,agent._s:mb_s,agent._real_r:real_r}) 
+            ,feed_dict=feed_dict) 
         '''print stuff'''
         pos_R = agent.R.copy()
         pos_R[pos_R<0] = 0
@@ -252,8 +258,7 @@ for i in range(num_steps):
         print(val_diff,cumprob/refresh,zero_frac,cur_gamma,steps_per_r,'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
         if display:
             plot_stuff()
-        else:
-            log_stuff()
+        log_stuff()
         '''reset vars'''
         cumr = 0
         cumprob = 0

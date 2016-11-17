@@ -179,8 +179,9 @@ class KADP(object):
         self.z_dim = 10
         self.b = .01
         self.hid_dim = 256
-        self.lr = 1e-4
+        self.lr = 1e-3
         self.max_cond = 3 #1 softmax,2 mean, 3+ max
+        self.viter_steps = 10
         self.change_actions = True
         ''' all placeholders'''
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
@@ -229,7 +230,7 @@ class KADP(object):
         print(self.row_offsets.shape)
         R_ = tf.gather(self._R_view,inds)
         NT_ = tf.gather(self._NT_view,inds)
-        for t in range(10):
+        for t in range(self.viter_steps):
             V_ = tf.gather(V[t],inds)
             if self.oracle:
                 q_vals = self._RPrime+tf.reduce_sum(normed_W*(NT_*self._gamma*V_),-1)
@@ -241,6 +242,7 @@ class KADP(object):
                 V.append(tf.reduce_mean(q_vals,0))
             else:
                 V.append(tf.reduce_max(q_vals,0))
+        self.all_V = V
         self.V_view= V[-1]
         self.val_diff = tf.reduce_sum(tf.square(V[-1]-V[-2]))
         '''

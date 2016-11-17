@@ -1,7 +1,6 @@
 import tensorflow as tf
 from Utils.ops import *
 import numpy as np
-from scipy.spatial.distance import cdist,pdist
 def get_shape_info(x):
     if x.__class__ == tf.Tensor:
         shape = tf.shape(x)
@@ -180,7 +179,7 @@ class KADP(object):
         self.z_dim = 10
         self.b = .01
         self.hid_dim = 256
-        self.lr = 1e-3
+        self.lr = 1e-4
         self.max_cond = 3 #1 softmax,2 mean, 3+ max
         self.change_actions = True
         ''' all placeholders'''

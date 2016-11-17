@@ -5,7 +5,7 @@ from Utils import simple_env
 from Utils.ops import compute_return
 import numpy as np
 import time
-from matplotlib import pyplot as plt
+import os
 '''
 if 'session' in locals() and session is not None:
     print('Close interactive session')
@@ -114,7 +114,6 @@ get_mb(mb_cond,D_s[D_ind:D_ind+mb_dim],D_a[D_ind:D_ind+mb_dim],D_r[D_ind:D_ind+m
 D_ind = (D_ind + mb_dim) % replay_dim
 if D_ind == 0:
     D_full = True
-plt.ion()
 max_gamma = .9
 gamma_anneal = 0 #int(1e4)
 if gamma_anneal > 0:
@@ -131,6 +130,55 @@ def softmax(x,dim=-1):
     denom = np.expand_dims(np.sum(ex,dim),dim)
     return ex/denom
 r_hist = []
+if 'DISPLAY' in os.environ:
+    display = True
+    from matplotlib import pyplot as plt
+    plt.ion()
+else:
+    display = False
+def plot_stuff():
+    plt.figure(1)
+    plt.clf()
+    mb_latent = simple_env.encode(mb_s)
+    Xs = mb_latent[:,0]
+    Ys = mb_latent[:,1]
+    offX = .5*env.radius*np.cos(env.rad_inc*np.arange(agent.n_actions))
+    offY = .5*env.radius*np.sin(env.rad_inc*np.arange(agent.n_actions))
+    plt.hold(True)
+    bub_size = 100
+    for action in range(agent.n_actions):
+        mask = np.argmax(mb_q_values,0) == action
+        #plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size*mask/2+10)#,c=((mb_q_values[action]-mb_values)))
+        plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
+    plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
+    axes = plt.gca()
+    axes.set_xlim([-env.limit,env.limit])
+    axes.set_ylim([-env.limit,env.limit])
+    plt.hold(False)
+    '''database values'''
+    fig = plt.figure(2)
+    plt.clf()
+    mem_latent = simple_env.encode(agent.SPrime_view)
+    Xs = mem_latent[:,0]
+    Ys = mem_latent[:,1]
+    plt.scatter(Xs,Ys,s=100,c=(values))
+    axes = fig.gca()
+    axes.set_xlim([-env.limit,env.limit])
+    axes.set_ylim([-env.limit,env.limit])
+    if agent.z_dim == 2:
+        '''model's viewpoint'''
+        plt.figure(3)
+        plt.clf()
+        plt.scatter(mb_embed[:,0],mb_embed[:,1],s=bub_size,c=mb_values)
+        plt.figure(4)
+        plt.clf()
+        plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=values)
+    plt.figure(6)
+    plt.clf()
+    plt.plot(r_hist)
+    plt.pause(.01)
+def log_stuff():
+    np.save('foo',r_hist)
 for i in range(num_steps):
     if i < gamma_anneal:
         cur_gamma =gamma[i]
@@ -141,7 +189,7 @@ for i in range(num_steps):
     else:
         cur_epsilon = min_epsilon
     if i % target_refresh == 0:
-        agent.gen_data(env)
+        #agent.gen_data(env)
         target_V = sess.run(agent.V_view,feed_dict={agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma})
     if train:
         if D_full:
@@ -184,85 +232,34 @@ for i in range(num_steps):
         cumgrads += 0
         cumloss += 0
     if i % refresh == 0:
+        '''get mb info'''
         real_r = np.zeros((agent.n_actions,mb_dim))
         for a in range(agent.n_actions):
             for s in range(mb_dim):
                 _,real_r[a,s],_ = env.get_transition(mb_s[s],a)
-        '''
-        plt.figure(10)
-        plt.scatter(agent.SPrime_view[:,0],agent.SPrime_view[:,1],s=100,c=agent.RPrime.max(0))
-        '''
         mb_q_values,mb_values,mb_actions,values,val_diff,embed,mb_embed,zero_frac \
             = sess.run([agent.q_val,agent.val,agent.action,agent.V_view,
             agent.val_diff,agent.embed(agent.SPrime_view),agent.embed(mb_sPrime),agent.zero_fraction]
             ,feed_dict={agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT
             ,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view
             ,agent._gamma:cur_gamma,agent._s:mb_s,agent._real_r:real_r}) 
-        '''inferred values'''
-        plt.figure(1)
-        plt.clf()
-        mb_latent = simple_env.encode(mb_s)
-        Xs = mb_latent[:,0]
-        Ys = mb_latent[:,1]
-        offX = .5*env.radius*np.cos(env.rad_inc*np.arange(agent.n_actions))
-        offY = .5*env.radius*np.sin(env.rad_inc*np.arange(agent.n_actions))
-        plt.hold(True)
-        bub_size = 100
+        '''print stuff'''
         pos_R = agent.R.copy()
         pos_R[pos_R<0] = 0
         print('pos reward stats: ',np.sum(pos_R,1),'net reward stats: ',np.sum(agent.R,1),' mb value stats: ',np.sum(mb_q_values,1),'mb action stats: ',np.histogram(mb_actions,np.arange(agent.n_actions+1))[0])
-        for action in range(agent.n_actions):
-            mask = np.argmax(mb_q_values,0) == action
-            #plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size*mask/2+10)#,c=((mb_q_values[action]-mb_values)))
-            plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
-        plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
-        axes = plt.gca()
-        axes.set_xlim([-env.limit,env.limit])
-        axes.set_ylim([-env.limit,env.limit])
-        plt.hold(False)
-        '''database values'''
-        fig = plt.figure(2)
-        plt.clf()
-        mem_latent = simple_env.encode(agent.SPrime_view)
-        Xs = mem_latent[:,0]
-        Ys = mem_latent[:,1]
-        plt.scatter(Xs,Ys,s=100,c=(values))
-        axes = fig.gca()
-        axes.set_xlim([-env.limit,env.limit])
-        axes.set_ylim([-env.limit,env.limit])
-        if agent.z_dim == 2:
-            '''model's viewpoint'''
-            plt.figure(3)
-            plt.clf()
-            plt.scatter(mb_embed[:,0],mb_embed[:,1],s=bub_size,c=mb_values)
-            plt.figure(4)
-            plt.clf()
-            plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=values)
-        if mb_cond != 2:
-            '''test performance'''
-            cur_epsilon = .1
-            get_mb(2,mb_s,mb_a,mb_r,mb_sPrime,mb_nt,mb_R)
-            plt.figure(5)
-            plt.clf()
-            test_latent = simple_env.encode(mb_s)
-            plt.scatter(test_latent[:,0],test_latent[:,1],s=bub_size)
-            axes = plt.gca()
-            axes.set_xlim([-env.limit,env.limit])
-            axes.set_ylim([-env.limit,env.limit])
-            steps_per_r = 1/(mb_r.sum()/mb_dim+1e-10)
-        else:
-            steps_per_r = 1/(cumr/mb_dim/refresh+1e-10)
+        steps_per_r = 1/(cumr/mb_dim/refresh+1e-10)
         r_hist.append(cumr)
         print(val_diff,cumprob/refresh,zero_frac,cur_gamma,steps_per_r,'iter: ', i,'loss: ',cumloss/refresh,'grads: ',cumgrads/refresh,'time: ',time.clock()-cur_time)
-        plt.figure(6)
-        plt.clf()
-        plt.plot(r_hist)
+        if display:
+            plot_stuff()
+        else:
+            log_stuff()
+        '''reset vars'''
         cumr = 0
         cumprob = 0
         cur_time = time.clock()
         cumloss = 0
         cumgrads = 0
-        plt.pause(.01)
         '''change memories'''
         #need to update target V too!
         #agent.gen_data(env)

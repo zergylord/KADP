@@ -13,3 +13,10 @@ plt.figure(2)
 plt.scatter(x[mask],y[mask],s=100,c=np.log(v[mask]))
 plt.show()
 
+viter = np.load('viter_data.npy')
+plt.figure(3)
+for i in range(11):
+    plt.clf()
+    plt.scatter(x[mask],y[mask],s=100,c=(viter[i][mask]))
+    plt.show()
+

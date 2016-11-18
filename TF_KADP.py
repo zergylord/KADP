@@ -145,9 +145,9 @@ class KADP(object):
             V_ = tf.gather(self.V,a)
         if self.oracle:
             if a == None:
-                q_val = self._real_r + tf.reduce_sum(normed_weights*(NT_*self._gamma*V_),-1)
+                q_val = self._real_r + self._real_nt*tf.reduce_sum(normed_weights*(self._gamma*V_),-1)
             else:
-                q_val = self._real_ra + tf.reduce_sum(normed_weights*(NT_*self._gamma*V_),-1)
+                q_val = self._real_ra + self._real_nta*tf.reduce_sum(normed_weights*(self._gamma*V_),-1)
         else:
             q_val = tf.reduce_sum(normed_weights*(R_+NT_*self._gamma*V_),-1)
         return q_val
@@ -163,7 +163,8 @@ class KADP(object):
         for a in range(self.n_actions):
             for i in range(self.n_samples):
                 #for oracle
-                _,self.RPrime[a,i],_ = env.get_transition(self.SPrime_view[i],a)
+                _,self.RPrime[a,i],term = env.get_transition(self.SPrime_view[i],a)
+                self.NTPrime[a,i]= not term
 
     def __init__(self,env,W_and_NNI = None):
         self.net_exists = False
@@ -178,7 +179,7 @@ class KADP(object):
         self.s_dim = 2
         self.z_dim = 10
         self.b = .01
-        self.hid_dim = 256
+        self.hid_dim = 64
         self.lr = 1e-3
         self.max_cond = 3 #1 softmax,2 mean, 3+ max
         self.viter_steps = 10
@@ -189,6 +190,8 @@ class KADP(object):
         self._r = tf.placeholder(tf.float32,shape=(None,1,))
         self._real_r = tf.placeholder(tf.float32,shape=(self.n_actions,None),name='real_r')
         self._real_ra = tf.placeholder(tf.float32,shape=(None,),name='real_ra')
+        self._real_nt = tf.placeholder(tf.float32,shape=(self.n_actions,None),name='real_nt')
+        self._real_nta = tf.placeholder(tf.float32,shape=(None,),name='real_nta')
         self._sPrime = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
         self._nt = tf.placeholder(tf.float32,shape=(None,1,))
         self._gamma = tf.placeholder(tf.float32,shape=())
@@ -198,6 +201,7 @@ class KADP(object):
         self._R = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,),name='R')
         self._R_view = tf.reshape(self._R,(-1,))
         self._RPrime = tf.placeholder(tf.float32,shape=(self.n_actions,self.n_samples,),name='RPrime')
+        self._NTPrime = tf.placeholder(tf.float32,shape=(self.n_actions,self.n_samples,),name='NTPrime')
         self._NT = tf.placeholder(tf.float32,shape=(self.n_actions,self.samples_per_action,),name='NT')
         self._NT_view = tf.reshape(self._NT,(-1,))
         '''create dataset'''
@@ -208,6 +212,7 @@ class KADP(object):
         self.R = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
         self.R_view = self.R.reshape(-1)
         self.RPrime = np.zeros((self.n_actions,self.n_samples)).astype(np.float32())
+        self.NTPrime = np.zeros((self.n_actions,self.n_samples)).astype(np.float32())
         self.NT = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
         self.NT_view = self.NT.reshape(-1)
         ''' these should be tensors
@@ -233,7 +238,7 @@ class KADP(object):
         for t in range(self.viter_steps):
             V_ = tf.gather(V[t],inds)
             if self.oracle:
-                q_vals = self._RPrime+tf.reduce_sum(normed_W*(NT_*self._gamma*V_),-1)
+                q_vals = self._RPrime+self._NTPrime*tf.reduce_sum(normed_W*(self._gamma*V_),-1)
             else:
                 q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.max_cond == 1:

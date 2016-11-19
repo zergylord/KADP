@@ -145,9 +145,9 @@ class KADP(object):
             V_ = tf.gather(self.V,a)
         if self.oracle:
             if a == None:
-                q_val = self._real_r + self._real_nt*tf.reduce_sum(normed_weights*(self._gamma*V_),-1)
+                q_val = self._real_r + self._real_nt*tf.reduce_sum(normed_weights*(self._gamma*NT_*V_),-1)
             else:
-                q_val = self._real_ra + self._real_nta*tf.reduce_sum(normed_weights*(self._gamma*V_),-1)
+                q_val = self._real_ra + self._real_nta*tf.reduce_sum(normed_weights*(self._gamma*NT_*V_),-1)
         else:
             q_val = tf.reduce_sum(normed_weights*(R_+NT_*self._gamma*V_),-1)
         return q_val
@@ -238,7 +238,7 @@ class KADP(object):
         for t in range(self.viter_steps):
             V_ = tf.gather(V[t],inds)
             if self.oracle:
-                q_vals = self._RPrime+self._NTPrime*tf.reduce_sum(normed_W*(self._gamma*V_),-1)
+                q_vals = self._RPrime+self._NTPrime*tf.reduce_sum(normed_W*(self._gamma*NT_*V_),-1)
             else:
                 q_vals = tf.reduce_sum(normed_W*(R_+NT_*self._gamma*V_),-1)
             if self.max_cond == 1:

@@ -176,7 +176,7 @@ class KADP(object):
         #for converting inds for a particular action to row inds
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
-        self.s_dim = 2
+        self.s_dim = env.observation_space.shape
         self.z_dim = 10
         self.b = .01
         self.hid_dim = 64

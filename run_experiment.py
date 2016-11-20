@@ -16,7 +16,7 @@ np.random.seed(111)
 print(np.random.rand())
 foo = sess.run(tf.random_uniform((1,)))
 print('hi',foo)
-env = simple_env.Simple(1)
+env = simple_env.Cycle(1)
 agent = KADP(env)
 check_op = tf.add_check_numerics_ops() 
 merged = tf.merge_all_summaries()
@@ -63,7 +63,7 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt,mb_R):
             for yi in range(side):
                 mb_s[count,:] = np.asarray([xv[xi,yi],yv[xi,yi]])
                 count +=1
-        mb_s[:] = simple_env.decode(mb_s)
+        mb_s[:] = env.decode(mb_s)
         mb_a = sess.run(agent.action,feed_dict={agent._NTPrime:agent.NTPrime,agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s})
         for j in range(mb_dim):
             sPrime,r,term = env.get_transition(mb_s[j],mb_a[j])
@@ -141,49 +141,52 @@ if 'DISPLAY' in os.environ:
 else:
     display = False
 def plot_stuff():
+    mb_latent = env.encode(mb_s)
     plt.figure(1)
     plt.clf()
-    mb_latent = simple_env.encode(mb_s)
-    Xs = mb_latent[:,0]
-    Ys = mb_latent[:,1]
-    offX = .5*env.radius*np.cos(env.rad_inc*np.arange(agent.n_actions))
-    offY = .5*env.radius*np.sin(env.rad_inc*np.arange(agent.n_actions))
-    plt.hold(True)
-    bub_size = 100
-    for action in range(agent.n_actions):
-        mask = np.argmax(mb_q_values,0) == action
-        #plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size*mask/2+10)#,c=((mb_q_values[action]-mb_values)))
-        plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
-    plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
-    axes = plt.gca()
-    axes.set_xlim([-env.limit,env.limit])
-    axes.set_ylim([-env.limit,env.limit])
-    plt.hold(False)
-    '''database values'''
-    fig = plt.figure(2)
-    plt.clf()
-    mem_latent = simple_env.encode(agent.SPrime_view)
-    Xs = mem_latent[:,0]
-    Ys = mem_latent[:,1]
-    plt.scatter(Xs,Ys,s=100,c=(values))
-    axes = fig.gca()
-    axes.set_xlim([-env.limit,env.limit])
-    axes.set_ylim([-env.limit,env.limit])
-    if agent.z_dim == 2:
-        '''model's viewpoint'''
-        plt.figure(3)
+    if agent.s_dim == 2:
+        Xs = mb_latent[:,0]
+        Ys = mb_latent[:,1]
+        offX = .5*env.radius*np.cos(env.rad_inc*np.arange(agent.n_actions))
+        offY = .5*env.radius*np.sin(env.rad_inc*np.arange(agent.n_actions))
+        plt.hold(True)
+        bub_size = 100
+        for action in range(agent.n_actions):
+            mask = np.argmax(mb_q_values,0) == action
+            #plt.scatter(Xs+offX[action],Ys+offY[action],s=bub_size*mask/2+10)#,c=((mb_q_values[action]-mb_values)))
+            plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
+        plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
+        axes = plt.gca()
+        axes.set_xlim([-env.limit,env.limit])
+        axes.set_ylim([-env.limit,env.limit])
+        plt.hold(False)
+        '''database values'''
+        fig = plt.figure(2)
         plt.clf()
-        plt.scatter(mb_embed[:,0],mb_embed[:,1],s=bub_size,c=mb_values)
-        plt.figure(4)
-        plt.clf()
-        plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=values)
+        mem_latent = env.encode(agent.SPrime_view)
+        Xs = mem_latent[:,0]
+        Ys = mem_latent[:,1]
+        plt.scatter(Xs,Ys,s=100,c=(values))
+        axes = fig.gca()
+        axes.set_xlim([-env.limit,env.limit])
+        axes.set_ylim([-env.limit,env.limit])
+        if agent.z_dim == 2:
+            '''model's viewpoint'''
+            plt.figure(3)
+            plt.clf()
+            plt.scatter(mb_embed[:,0],mb_embed[:,1],s=bub_size,c=mb_values)
+            plt.figure(4)
+            plt.clf()
+            plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=values)
+    else:
+        pass
     plt.figure(6)
     plt.clf()
     plt.plot(r_hist)
     plt.pause(.01)
 def log_stuff():
     np.save('r_data',r_hist)
-    mem_latent = simple_env.encode(agent.SPrime_view)
+    mem_latent = env.encode(agent.SPrime_view)
     np.save('point_data',mem_latent)
     np.save('val_data',values)
     np.save('viter_data',all_V)

@@ -13,17 +13,6 @@ class ObservationSpace(object):
             self.sample = sample
 def odd_root(x,n=3):
     return np.power(abs(x),float(1)/n)*np.sign(x)
-n = 3
-'''
-def encode(obs):
-    return odd_root(obs*Simple.limit**n,n)
-def decode(s):
-    return (s**n)/(Simple.limit**n)
-'''
-def encode(obs):
-    return obs*Simple.limit
-def decode(s):
-    return s/Simple.limit
 num_cells = 8
 def state2vec(s):
     one_hot = np.zeros(num_cells*2)
@@ -41,11 +30,24 @@ def decode(s):
     return np.dot(s,W)+d
 '''
 class Simple(object):
+    n = 3
+    '''
+    def encode(obs):
+        return odd_root(obs*Simple.limit**n,n)
+    def decode(s):
+        return (s**n)/(Simple.limit**n)
+    '''
+    @staticmethod
+    def encode(obs):
+        return obs*Simple.limit
+    @staticmethod
+    def decode(s):
+        return s/Simple.limit
     radius = .5 #.25
     limit = 4
     @staticmethod
     def _new_state():
-        return decode((np.random.rand(2)-.5)*2*Simple.limit)
+        return Simple.decode((np.random.rand(2)-.5)*2*Simple.limit)
     observation_space = ObservationSpace(2,lambda: Simple._new_state())
     @staticmethod
     def get_reward(SPrime):
@@ -63,7 +65,7 @@ class Simple(object):
         self.s = self._new_state()
         return self.s
     def get_transition(self,obs,a):
-        s = encode(obs)
+        s = Simple.encode(obs)
         assert np.all(s>=-4),s[s<-4]
         assert np.all(s<=4),s[s>4]
         sPrime =  s + np.asarray([self.radius*np.cos(self.rad_inc*a),self.radius*np.sin(self.rad_inc*a)])
@@ -85,7 +87,7 @@ class Simple(object):
                 r = -1
             else:
                 r,term = self.get_reward(sPrime)
-            sPrime = decode(sPrime)
+            sPrime = Simple.decode(sPrime)
         return sPrime,r,term
     def step(self,a):    
         sPrime,r,term = self.get_transition(self.s,a)
@@ -110,3 +112,56 @@ mb_s = encode(mb_s)
 plt.scatter(mb_s[:,0],mb_s[:,1])
 plt.show()
 '''
+class Cycle(object):
+    step_size = 1.0
+    goal_size = 2.0
+    cycle_size = 10
+    def encode(self,obs):
+        if self.one_hot:
+            return np.nonzero(obs)[0]
+        else:
+            return obs*Cycle.cycle_size
+    def decode(self,s):
+        if self.one_hot:
+            zeros = np.zeros((Cycle.cycle_size,))
+            zeros[int(s)] = 1
+            return zeros
+        else:
+            return s/Cycle.cycle_size
+    def _new_state(self):
+        #return self.decode(np.random.rand()*Cycle.cycle_size)
+        return self.decode(np.random.randint(Cycle.cycle_size))
+    @staticmethod
+    def get_reward(SPrime):
+        goal = 5
+        in_goal = SPrime > goal and SPrime < (goal+Cycle.goal_size)
+        if in_goal:
+            r = 1
+        else:
+            r = -.1
+        return r,False
+    def __init__(self,n_actions = 2,one_hot = True):
+        self.one_hot = one_hot
+        if self.one_hot:
+            s_dim = Cycle.cycle_size
+        else:
+            s_dim = 1
+        observation_space = ObservationSpace(s_dim,lambda: self._new_state())
+        self.reset()
+        self.action_space = ActionSpace(n_actions)
+    def reset(self):
+        self.s = self._new_state()
+        return self.s
+    def get_transition(self,obs,a):
+        s = self.encode(obs)
+        if a == 0:
+            sPrime = (s + Cycle.step_size) % Cycle.cycle_size
+        else:
+            sPrime = (s - Cycle.step_size) % Cycle.cycle_size
+        r,term = self.get_reward(sPrime)
+        sPrime = self.decode(sPrime)
+        return sPrime,r,term
+    def step(self,a):    
+        sPrime,r,term = self.get_transition(self.s,a)
+        self.s = sPrime
+        return sPrime,r,term,False

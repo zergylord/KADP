@@ -145,9 +145,9 @@ class KADP(object):
             V_ = tf.gather(self.V,a)
         if self.oracle:
             if a == None:
-                q_val = self._real_r + self._real_nt*tf.reduce_sum(normed_weights*(self._gamma*NT_*V_),-1)
+                q_val = self._full_r + self._full_nt*tf.reduce_sum(normed_weights*(self._gamma*NT_*V_),-1)
             else:
-                q_val = self._real_ra + self._real_nta*tf.reduce_sum(normed_weights*(self._gamma*NT_*V_),-1)
+                q_val = tf.squeeze(self._r) + tf.squeeze(self._nt)*tf.reduce_sum(normed_weights*(self._gamma*NT_*V_),-1)
         else:
             q_val = tf.reduce_sum(normed_weights*(R_+NT_*self._gamma*V_),-1)
         return q_val
@@ -177,9 +177,9 @@ class KADP(object):
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = env.observation_space.shape
-        self.z_dim = 100
+        self.z_dim = 10
         self.b = .01
-        self.hid_dim = 640
+        self.hid_dim = 64
         self.lr = 1e-5
         self.max_cond = 3 #1 softmax,2 mean, 3+ max
         self.viter_steps = 2
@@ -188,10 +188,8 @@ class KADP(object):
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
         self._a = tf.placeholder(tf.int32,shape=(None,))
         self._r = tf.placeholder(tf.float32,shape=(None,1,))
-        self._real_r = tf.placeholder(tf.float32,shape=(self.n_actions,None),name='real_r')
-        self._real_ra = tf.placeholder(tf.float32,shape=(None,),name='real_ra')
-        self._real_nt = tf.placeholder(tf.float32,shape=(self.n_actions,None),name='real_nt')
-        self._real_nta = tf.placeholder(tf.float32,shape=(None,),name='real_nta')
+        self._full_r = tf.placeholder(tf.float32,shape=(self.n_actions,None),name='real_r')
+        self._full_nt = tf.placeholder(tf.float32,shape=(self.n_actions,None),name='real_nt')
         self._sPrime = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
         self._nt = tf.placeholder(tf.float32,shape=(None,1,))
         self._gamma = tf.placeholder(tf.float32,shape=())

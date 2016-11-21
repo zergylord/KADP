@@ -94,12 +94,12 @@ def get_mb(cond,mb_s,mb_a,mb_r,mb_sPrime,mb_nt,mb_R):
             if np.random.rand() < cur_epsilon:
                 mb_a[j] = np.random.randint(agent.n_actions)
             else:
-                real_r = np.zeros((agent.n_actions,1))
-                real_nt = np.zeros((agent.n_actions,1))
+                full_r = np.zeros((agent.n_actions,1))
+                full_nt = np.zeros((agent.n_actions,1))
                 for action in range(agent.n_actions):
-                    _,real_r[action],term = env.get_transition(mb_s[j],action) 
-                    real_nt[action] = not term
-                mb_a[j] = sess.run(agent.action,feed_dict={agent._real_nt:real_nt,agent._real_r:real_r,agent._NTPrime:agent.NTPrime,agent._RPrime:agent.RPrime,agent.V_view:cached_V,agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:np.expand_dims(mb_s[j],0)})[0]
+                    _,full_r[action],term = env.get_transition(mb_s[j],action) 
+                    full_nt[action] = not term
+                mb_a[j] = sess.run(agent.action,feed_dict={agent._full_nt:full_nt,agent._full_r:full_r,agent._NTPrime:agent.NTPrime,agent._RPrime:agent.RPrime,agent.V_view:cached_V,agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:np.expand_dims(mb_s[j],0)})[0]
             sPrime,r,term,_ = env.step(mb_a[j])
             mb_sPrime[j,:] = sPrime
             mb_r[j] = r
@@ -190,6 +190,9 @@ def log_stuff():
     np.save('point_data',mem_latent)
     np.save('val_data',values)
     np.save('viter_data',all_V)
+def make_feed_dict():
+    return {agent._NTPrime:agent.NTPrime,agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma} 
+dqn = True
 for i in range(num_steps):
     if i < gamma_anneal:
         cur_gamma =gamma[i]
@@ -201,7 +204,7 @@ for i in range(num_steps):
         cur_epsilon = min_epsilon
     if i % target_refresh == 0:
         #agent.gen_data(env)
-        target_V = sess.run(agent.V_view,feed_dict={agent._NTPrime:agent.NTPrime,agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma})
+        target_V = sess.run(agent.V_view,feed_dict=make_feed_dict())
     if train:
         if D_full:
             mb_inds = np.random.randint(replay_dim,size=[mb_dim])
@@ -213,34 +216,34 @@ for i in range(num_steps):
         mb_sPrime = D_sPrime[mb_inds]
         mb_nt = D_nt[mb_inds]
         mb_R = D_R[mb_inds]
-        feed_dict={agent._NTPrime:agent.NTPrime,agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_sPrime}
-        #double DQN
-        real_r = np.zeros((agent.n_actions,mb_dim))
-        real_nt = np.zeros((agent.n_actions,mb_dim))
+        #information for NEXT state oracle
+        full_rPrime = np.zeros((agent.n_actions,mb_dim))
+        full_ntPrime = np.zeros((agent.n_actions,mb_dim))
         for a in range(agent.n_actions):
             for s in range(mb_dim):
-                _,real_r[a,s],term = env.get_transition(mb_sPrime[s],a)
-                real_nt[a,s] = not term
-        feed_dict[agent._real_r] = real_r
-        feed_dict[agent._real_nt] = real_nt
-        real_max_action = sess.run(agent.action,feed_dict=feed_dict)
-        feed_dict[agent.V_view] = target_V
-        feed_dict[agent._a] = real_max_action
-        real_ra = np.zeros((mb_dim,))
-        real_nta = np.zeros((mb_dim,))
-        for s in range(mb_dim):
-            real_ra[s] = real_r[real_max_action[s],s]
-            real_nta[s] = real_nt[real_max_action[s],s]
-        feed_dict[agent._real_ra] = real_ra
-        feed_dict[agent._real_nta] = real_nta
-        target_val = sess.run(agent.q,feed_dict=feed_dict)
-        feed_dict={agent._NTPrime:agent.NTPrime,agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma,agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt}
-        for s in range(mb_dim):
-            _,real_ra[s],term = env.get_transition(mb_s[s],mb_a[s])
-            real_nta[s]=not term
-        feed_dict[agent._real_ra] = real_ra
-        feed_dict[agent._real_nta] = real_nta
+                _,full_rPrime[a,s],term = env.get_transition(mb_sPrime[s],a)
+                full_ntPrime[a,s] = not term
+        if dqn:
+            #double DQN -- Q-Prime
+            feed_dict = make_feed_dict()
+            feed_dict[agent._s] = mb_sPrime
+            feed_dict[agent._full_r] = full_rPrime
+            feed_dict[agent._full_nt] = full_ntPrime
+            full_max_action = sess.run(agent.action,feed_dict=feed_dict)
+            feed_dict[agent.V_view] = target_V
+            feed_dict[agent._a] = full_max_action
+            full_raPrime = np.zeros((mb_dim,1))
+            full_ntaPrime = np.zeros((mb_dim,1))
+            for s in range(mb_dim):
+                full_raPrime[s,0] = full_rPrime[full_max_action[s],s]
+                full_ntaPrime[s,0] = full_ntPrime[full_max_action[s],s]
+            feed_dict[agent._r] = full_raPrime
+            feed_dict[agent._nt] = full_ntaPrime
+            target_val = sess.run(agent.q,feed_dict=feed_dict)
+        feed_dict = make_feed_dict()
+        feed_dict.update({agent._s:mb_s,agent._a:mb_a,agent._sPrime:mb_sPrime,agent._r:mb_r,agent._nt:mb_nt})
         feed_dict[agent.target_val] = target_val
+        #training step
         summary,_,cur_grads,cur_loss,max_prob = sess.run([merged,agent.train_q,agent.get_grads,agent.q_loss,agent.max_prob],feed_dict=feed_dict)
         train_writer.add_summary(summary)
         cumprob += max_prob
@@ -252,15 +255,14 @@ for i in range(num_steps):
         cumloss += 0
     if i % refresh == 0:
         '''get mb info'''
-        real_r = np.zeros((agent.n_actions,mb_dim))
-        real_nt = np.zeros((agent.n_actions,mb_dim))
+        full_r = np.zeros((agent.n_actions,mb_dim))
+        full_nt = np.zeros((agent.n_actions,mb_dim))
         for a in range(agent.n_actions):
             for s in range(mb_dim):
-                _,real_r[a,s],term = env.get_transition(mb_s[s],a)
-                real_nt[a,s] = not term
-        feed_dict = {agent._NTPrime:agent.NTPrime,agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT
-            ,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view
-            ,agent._gamma:cur_gamma,agent._s:mb_s,agent._real_r:real_r,agent._real_nt:real_nt}
+                _,full_r[a,s],term = env.get_transition(mb_s[s],a)
+                full_nt[a,s] = not term
+        feed_dict = make_feed_dict()
+        feed_dict.update({agent._s:mb_s,agent._full_r:full_r,agent._full_nt:full_nt})
         all_V = sess.run(agent.all_V,feed_dict=feed_dict)
         mb_q_values,mb_values,mb_actions,values,val_diff,embed,mb_embed,zero_frac \
             = sess.run([agent.q_val,agent.val,agent.action,agent.V_view,

@@ -182,7 +182,7 @@ class KADP(object):
         self.hid_dim = 64
         self.lr = 1e-3
         self.max_cond = 3 #1 softmax,2 mean, 3+ max
-        self.viter_steps = 10
+        self.viter_steps = 1
         self.change_actions = True
         ''' all placeholders'''
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
@@ -339,6 +339,12 @@ class KADP(object):
                 op: train_return
             '''
             self.train_return = tf.train.AdamOptimizer(self.lr).minimize(self.r_loss)
+            '''2-step reward training'''
+            self._rPrime = tf.placeholder(tf.float32,shape=(None,1,))
+            r_target = self._r+self._gamma*self._rPrime
+            self.two_step_loss = tf.reduce_mean(tf.square(self.q-r_target))
+            self.train_two_step = tf.train.AdamOptimizer(self.lr).minimize(selt.two_step_loss)
+
         self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,self.net_weights),-1))
         self.zero_fraction = tf.nn.zero_fraction(self._R)
 

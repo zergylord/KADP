@@ -141,6 +141,7 @@ if 'DISPLAY' in os.environ:
 else:
     display = False
 def plot_stuff():
+    print(mb_s,mb_s.shape)
     mb_latent = env.encode(mb_s)
     plt.figure(1)
     plt.clf()
@@ -179,7 +180,8 @@ def plot_stuff():
             plt.clf()
             plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=values)
     else:
-        pass
+        print(mb_latent)
+        plt.bar(mb_latent,mb_values)
     plt.figure(6)
     plt.clf()
     plt.plot(r_hist)

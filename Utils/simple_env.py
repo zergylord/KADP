@@ -118,7 +118,7 @@ class Cycle(object):
     cycle_size = 10
     def encode(self,obs):
         if self.one_hot:
-            return np.nonzero(obs)[0]
+            return np.argmax(obs,-1)
         else:
             return obs*Cycle.cycle_size
     def decode(self,s):
@@ -146,7 +146,7 @@ class Cycle(object):
             s_dim = Cycle.cycle_size
         else:
             s_dim = 1
-        observation_space = ObservationSpace(s_dim,lambda: self._new_state())
+        self.observation_space = ObservationSpace(s_dim,lambda: self._new_state())
         self.reset()
         self.action_space = ActionSpace(n_actions)
     def reset(self):

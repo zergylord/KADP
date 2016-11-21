@@ -169,21 +169,21 @@ class KADP(object):
     def __init__(self,env,W_and_NNI = None):
         self.net_exists = False
         self.n_actions = env.action_space.n
-        self.samples_per_action = 400
-        self.k = 400
+        self.samples_per_action = 50
+        self.k = 50
         self.oracle = True
         self.n_samples = self.n_actions*self.samples_per_action
         #for converting inds for a particular action to row inds
         self.row_offsets = np.expand_dims(np.expand_dims(np.arange(self.n_actions)*self.samples_per_action,-1),-1) 
         
         self.s_dim = env.observation_space.shape
-        self.z_dim = 10
+        self.z_dim = 100
         self.b = .01
-        self.hid_dim = 64
-        self.lr = 1e-3
+        self.hid_dim = 640
+        self.lr = 1e-5
         self.max_cond = 3 #1 softmax,2 mean, 3+ max
-        self.viter_steps = 1
-        self.change_actions = True
+        self.viter_steps = 2
+        self.change_actions = False
         ''' all placeholders'''
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
         self._a = tf.placeholder(tf.int32,shape=(None,))
@@ -249,7 +249,7 @@ class KADP(object):
                 V.append(tf.reduce_max(q_vals,0))
         self.all_V = V
         self.V_view= V[-1]
-        self.val_diff = tf.reduce_sum(tf.square(V[-1]-V[-2]))
+        #self.val_diff = tf.reduce_sum(tf.square(V[-1]-V[-2]))
         '''
         def loop_func(V,count):
             V_ = tf.gather(V,inds)
@@ -267,8 +267,8 @@ class KADP(object):
             return (ret,count+1)
         cond = lambda V,count: count<15
         self.V_view,_ = tf.while_loop(cond,loop_func,[tf.zeros((self.n_samples,),dtype=tf.float32),tf.constant(0)])
-        self.val_diff = tf.no_op()
         '''
+        self.val_diff = tf.no_op()
         self.V_view = tf.check_numerics(self.V_view,'foobar')
         #self.V_view= tf.reduce_mean(tf.pack(V),0)
         self.V = tf.reshape(self.V_view,[self.n_actions,self.samples_per_action])
@@ -343,7 +343,7 @@ class KADP(object):
             self._rPrime = tf.placeholder(tf.float32,shape=(None,1,))
             r_target = self._r+self._gamma*self._rPrime
             self.two_step_loss = tf.reduce_mean(tf.square(self.q-r_target))
-            self.train_two_step = tf.train.AdamOptimizer(self.lr).minimize(selt.two_step_loss)
+            self.train_two_step = tf.train.AdamOptimizer(self.lr).minimize(self.two_step_loss)
 
         self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,self.net_weights),-1))
         self.zero_fraction = tf.nn.zero_fraction(self._R)

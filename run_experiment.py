@@ -141,7 +141,6 @@ if 'DISPLAY' in os.environ:
 else:
     display = False
 def plot_stuff():
-    print(mb_s,mb_s.shape)
     mb_latent = env.encode(mb_s)
     plt.figure(1)
     plt.clf()
@@ -180,7 +179,6 @@ def plot_stuff():
             plt.clf()
             plt.scatter(embed[:,0],embed[:,1],s=bub_size,c=values)
     else:
-        print(mb_latent)
         plt.bar(mb_latent,mb_values)
     plt.figure(6)
     plt.clf()
@@ -202,7 +200,7 @@ for i in range(num_steps):
     else:
         cur_epsilon = min_epsilon
     if i % target_refresh == 0:
-        agent.gen_data(env)
+        #agent.gen_data(env)
         target_V = sess.run(agent.V_view,feed_dict={agent._NTPrime:agent.NTPrime,agent._RPrime:agent.RPrime,agent._R:agent.R,agent._NT:agent.NT,agent._S:agent.S,agent._SPrime_view:agent.SPrime_view,agent._gamma:cur_gamma})
     if train:
         if D_full:

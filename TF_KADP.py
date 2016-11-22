@@ -160,11 +160,16 @@ class KADP(object):
                 self.SPrime[a,i] = sPrime
                 self.R[a,i] = r
                 self.NT[a,i] = np.float32(not term)
+        #for oracle
+        SPP = np.zeros((self.n_actions,self.n_samples,self.s_dim))
+        SPP_view = np.reshape(SPP,[-1,self.s_dim])
         for a in range(self.n_actions):
             for i in range(self.n_samples):
-                #for oracle
-                _,self.RPrime[a,i],term = env.get_transition(self.SPrime_view[i],a)
+                SPP[a,i,:],self.RPrime[a,i],term = env.get_transition(self.SPrime_view[i],a)
                 self.NTPrime[a,i]= not term
+        for a in range(self.n_actions):
+            for i in range(self.n_actions*self.n_samples):
+                _,self.RPP[a,i],term = env.get_transition(SPP_view[i],a)
 
     def __init__(self,env,W_and_NNI = None):
         self.net_exists = False
@@ -180,9 +185,9 @@ class KADP(object):
         self.z_dim = 10
         self.b = .01
         self.hid_dim = 64
-        self.lr = 1e-5
+        self.lr = 1e-3
         self.max_cond = 3 #1 softmax,2 mean, 3+ max
-        self.viter_steps = 2
+        self.viter_steps = 1
         self.change_actions = False
         ''' all placeholders'''
         self._s = tf.placeholder(tf.float32,shape=(None,self.s_dim,))
@@ -210,6 +215,7 @@ class KADP(object):
         self.R = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
         self.R_view = self.R.reshape(-1)
         self.RPrime = np.zeros((self.n_actions,self.n_samples)).astype(np.float32())
+        self.RPP = np.zeros((self.n_actions,self.n_actions*self.n_samples)).astype(np.float32())
         self.NTPrime = np.zeros((self.n_actions,self.n_samples)).astype(np.float32())
         self.NT = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
         self.NT_view = self.NT.reshape(-1)
@@ -247,8 +253,8 @@ class KADP(object):
                 V.append(tf.reduce_max(q_vals,0))
         self.all_V = V
         self.V_view= V[-1]
-        #self.val_diff = tf.reduce_sum(tf.square(V[-1]-V[-2]))
         '''
+        #self.val_diff = tf.reduce_sum(tf.square(V[-1]-V[-2]))
         def loop_func(V,count):
             V_ = tf.gather(V,inds)
             if self.oracle:
@@ -296,13 +302,13 @@ class KADP(object):
             self.target_val = tf.placeholder(tf.float32,[None,],name="target_val")
             self.target_q = tf.stop_gradient(self._r+self._nt*self._gamma*self.target_val)
             self.q_loss = tf.reduce_mean(tf.square(self.target_q - self.q))
-            tf.scalar_summary('q loss',self.q_loss)
+            #tf.scalar_summary('q loss',self.q_loss)
             self.q_loss = tf.check_numerics(self.q_loss,'fuck q loss')
             optim = tf.train.AdamOptimizer(self.lr)
             grads_and_vars = optim.compute_gradients(self.q_loss)
             capped_grads_and_vars = grads_and_vars
             #capped_grads_and_vars = [(tf.clip_by_value(gv[0],-.1,.1),gv[1]) for gv in grads_and_vars]
-            grad_summaries = [tf.histogram_summary('poo'+v.name,g) if g is not None else '' for g,v in grads_and_vars]
+            #grad_summaries = [tf.histogram_summary('poo'+v.name,g) if g is not None else '' for g,v in grads_and_vars]
             self.train_q = optim.apply_gradients(capped_grads_and_vars)
             '''reward and statePred training graph
                 feed: _s,_a,_r,_sPrime,_nt
@@ -338,10 +344,29 @@ class KADP(object):
             '''
             self.train_return = tf.train.AdamOptimizer(self.lr).minimize(self.r_loss)
             '''2-step reward training'''
+            self._aPrime = tf.placeholder(tf.int32,shape=(None,))
+            self._aPP = tf.placeholder(tf.int32,shape=(None,))
+            self._RPP = tf.placeholder(tf.float32,shape=(self.n_actions,self.n_actions*self.n_samples,),name='RPP')
+            S_ = tf.gather(self._S,self._a)
+            weights,inds = self.kernel(self._s,S_,minibatch=True)
+            normed_weights = self._norm(weights)
+            R_ = tf.gather(self._R,self._a)
+            RPrime_ = tf.gather(self._RPrime,self._aPrime)
+            RPrime_ = tf.Print(RPrime_,[tf.shape(normed_W)])
+            W_ = tf.gather(normed_W,self._aPP)
+            RPP_ = tf.gather(self._RPP,self._aPP)
+            RPP_ = tf.gather(RPP_,self._aPrime)
+            RPP_ = tf.Print(RPP_,[tf.shape(RPP_),tf.shape(W_),tf.shape(RPrime_)])
+            V_ = RPrime_+tf.reduce_sum(W_*self._gamma*(RPP_),-1)
+            two_step_r_hat = tf.squeeze(self._r) + tf.reduce_sum(normed_weights*self._gamma*V_,-1)
+
             self._rPrime = tf.placeholder(tf.float32,shape=(None,1,))
-            r_target = self._r+self._gamma*self._rPrime
-            self.two_step_loss = tf.reduce_mean(tf.square(self.q-r_target))
-            self.train_two_step = tf.train.AdamOptimizer(self.lr).minimize(self.two_step_loss)
+            self._rPP = tf.placeholder(tf.float32,shape=(None,1,))
+            r_target = self._r+self._gamma*(self._rPrime+self._gamma*self._rPP)
+            self.two_step_loss = tf.reduce_mean(tf.square(two_step_r_hat-r_target))
+            grads_and_vars = optim.compute_gradients(self.two_step_loss)
+            grad_summaries = [tf.histogram_summary('poo'+v.name,g) if g is not None else '' for g,v in grads_and_vars]
+            self.train_two_step = optim.apply_gradients(grads_and_vars)
 
         self.get_grads = tf.reduce_mean(tf.reduce_sum(tf.gradients(self.q_loss,self.net_weights),-1))
         self.zero_fraction = tf.nn.zero_fraction(self._R)

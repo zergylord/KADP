@@ -43,7 +43,7 @@ class Simple(object):
     @staticmethod
     def decode(s):
         return s/Simple.limit
-    radius = .5 #.25
+    radius = .75 #.25
     limit = 4
     @staticmethod
     def _new_state():

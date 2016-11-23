@@ -84,7 +84,7 @@ class Simple(object):
                 sPrime[sPrime > self.limit] = self.limit
                 sPrime[sPrime < -self.limit] = -self.limit
                 term = True
-                r = -1
+                r = 0
             else:
                 r,term = self.get_reward(sPrime)
             sPrime = Simple.decode(sPrime)

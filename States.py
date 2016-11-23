@@ -1,9 +1,9 @@
 import tensorflow as tf
 sess = tf.Session()
-from ops import *
+from Utils.ops import *
 import time
 import numpy as np
-import simple_env
+from Utils import simple_env
 '''
 np.random.seed(111)
 tf.set_random_seed(111)
@@ -108,7 +108,7 @@ count = 0
 for xi in range(side):
     for yi in range(side):
         s[count,:] = np.asarray([xv[xi,yi],yv[xi,yi]])
-        s[count,:] = simple_env.decode(s[count])
+        s[count,:] = env.decode(s[count])
         a = env.action_space.sample() #ignoring actions for now -- passive dynamics
         sPrime[count,:],r[count,:],_ = env.get_transition(s[count],a)
         count +=1
@@ -156,8 +156,8 @@ if True:
     plt.ioff()
     plt.show()
     plt.ion()
-    Xs = simple_env.encode(s[:,0])
-    Ys = simple_env.encode(s[:,1])
+    Xs = env.encode(s[:,0])
+    Ys = env.encode(s[:,1])
     for j in range(mb_dim):
         plt.clf()
         plt.scatter(Xs,Ys,s=100,c=prox[j])

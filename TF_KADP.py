@@ -162,14 +162,15 @@ class KADP(object):
                 self.NT[a,i] = np.float32(not term)
         #for oracle
         SPP = np.zeros((self.n_actions,self.n_samples,self.s_dim))
-        SPP_view = np.reshape(SPP,[-1,self.s_dim])
         for a in range(self.n_actions):
             for i in range(self.n_samples):
                 SPP[a,i,:],self.RPrime[a,i],term = env.get_transition(self.SPrime_view[i],a)
                 self.NTPrime[a,i]= not term
         for a in range(self.n_actions):
-            for i in range(self.n_actions*self.n_samples):
-                _,self.RPP[a,i],term = env.get_transition(SPP_view[i],a)
+            for aa in range(self.n_actions):
+                aind = a*self.n_actions+aa
+                for i in range(self.n_samples):
+                    _,self.RPP[aind,i],term = env.get_transition(SPP[a,i],aa)
 
     def __init__(self,env,W_and_NNI = None):
         self.net_exists = False
@@ -215,7 +216,7 @@ class KADP(object):
         self.R = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
         self.R_view = self.R.reshape(-1)
         self.RPrime = np.zeros((self.n_actions,self.n_samples)).astype(np.float32())
-        self.RPP = np.zeros((self.n_actions,self.n_actions*self.n_samples)).astype(np.float32())
+        self.RPP = np.zeros((self.n_actions*self.n_actions,self.n_samples)).astype(np.float32())
         self.NTPrime = np.zeros((self.n_actions,self.n_samples)).astype(np.float32())
         self.NT = np.zeros((self.n_actions,self.samples_per_action)).astype(np.float32())
         self.NT_view = self.NT.reshape(-1)
@@ -276,7 +277,7 @@ class KADP(object):
         self.V_view = tf.check_numerics(self.V_view,'foobar')
         #self.V_view= tf.reduce_mean(tf.pack(V),0)
         self.V = tf.reshape(self.V_view,[self.n_actions,self.samples_per_action])
-        '''get value graph
+        ''' get value graph
             feed: _s
             ops: val,action
         '''
@@ -346,16 +347,16 @@ class KADP(object):
             '''2-step reward training'''
             self._aPrime = tf.placeholder(tf.int32,shape=(None,))
             self._aPP = tf.placeholder(tf.int32,shape=(None,))
-            self._RPP = tf.placeholder(tf.float32,shape=(self.n_actions,self.n_actions*self.n_samples,),name='RPP')
+            self._RPP = tf.placeholder(tf.float32,shape=(self.n_actions*self.n_actions,self.n_samples,),name='RPP')
             S_ = tf.gather(self._S,self._a)
             weights,inds = self.kernel(self._s,S_,minibatch=True)
             normed_weights = self._norm(weights)
             R_ = tf.gather(self._R,self._a)
             RPrime_ = tf.gather(self._RPrime,self._aPrime)
+            RPrime_ = tf.Print(RPrime_,[tf.shape(inds)],'hiooo')
             RPrime_ = tf.Print(RPrime_,[tf.shape(normed_W)])
             W_ = tf.gather(normed_W,self._aPP)
-            RPP_ = tf.gather(self._RPP,self._aPP)
-            RPP_ = tf.gather(RPP_,self._aPrime)
+            RPP_ = tf.gather(self._RPP,self._aPrime*self.n_actions+self._aPP)
             RPP_ = tf.Print(RPP_,[tf.shape(RPP_),tf.shape(W_),tf.shape(RPrime_)])
             V_ = RPrime_+tf.reduce_sum(W_*self._gamma*(RPP_),-1)
             two_step_r_hat = tf.squeeze(self._r) + tf.reduce_sum(normed_weights*self._gamma*V_,-1)

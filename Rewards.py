@@ -1,9 +1,9 @@
 import tensorflow as tf
 sess = tf.Session()
-from ops import *
+from Utils.ops import *
 import time
 import numpy as np
-import simple_env
+from Utils import simple_env
 '''
 np.random.seed(111)
 tf.set_random_seed(111)
@@ -50,18 +50,20 @@ plt.ion()
 for i in range(int(1e4)):
     for j in range(mb_dim):
         s[j] = env.observation_space.sample()
-        r[j],_ = env.get_reward(simple_env.encode(s[j]))
+        #r[j],_ = env.get_reward(env.encode(s[j]))
+        _,r[j],_ = env.get_transition(s[j],0)
     _,cur_loss,pred = sess.run([train_step,loss,pred_r],feed_dict={_s:s,_r:r,_mem_s:S,_mem_r:R})
     cum_loss += cur_loss
     if i % int(1e2) == 0:
         for j in range(mem_dim):
             S[j] = env.observation_space.sample()
-            R[j],_ = env.get_reward(simple_env.encode(S[j]))
+            #R[j],_ = env.get_reward(env.encode(S[j]))
+            _,R[j],_ = env.get_transition(S[j],0)
         #print(R.sum())
         print(i,cum_loss)
         cum_loss = 0
-        Xs = simple_env.encode(s[:,0])
-        Ys = simple_env.encode(s[:,1])
+        Xs = env.encode(s[:,0])
+        Ys = env.encode(s[:,1])
         plt.clf()
         plt.scatter(Xs,Ys,s=100,c=pred)
         axes = plt.gca()

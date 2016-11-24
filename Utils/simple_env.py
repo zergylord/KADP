@@ -43,22 +43,25 @@ class Simple(object):
     @staticmethod
     def decode(s):
         return s/Simple.limit
-    radius = .75 #.25
+    radius = .25
     limit = 4
     @staticmethod
     def _new_state():
         return Simple.decode((np.random.rand(2)-.5)*2*Simple.limit)
     observation_space = ObservationSpace(2,lambda: Simple._new_state())
-    @staticmethod
-    def get_reward(SPrime):
-        term = ((SPrime[0] > 2)
-                 *(SPrime[0] < 3)
-                 *(SPrime[1] > 2)
-                 *(SPrime[1] < 3))
+    def get_reward(self,SPrime):
+        term = ((SPrime[0] > self.x_goal)
+                 *(SPrime[0] < self.x_goal+1)
+                 *(SPrime[1] > self.y_goal)
+                 *(SPrime[1] < self.y_goal+1))
         return np.float32(term),term
         #return -1,term
+    def gen_goal(self):
+        self.x_goal = np.random.rand()*(self.limit*2-1)-self.limit
+        self.y_goal = np.random.rand()*(self.limit*2-1)-self.limit
     def __init__(self,n_actions = 4):
         self.reset()
+        self.gen_goal()
         self.rad_inc = 2*np.pi/n_actions
         self.action_space = ActionSpace(n_actions)
     def reset(self):

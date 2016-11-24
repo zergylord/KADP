@@ -18,8 +18,8 @@ mem_dim = 300
 n_viter = 10
 '''setup graph'''
 def make_encoder(inp,scope='encoder',reuse=False):
-    #initial = tf.contrib.layers.xavier_initializer()
-    initial = orthogonal_initializer()
+    initial = tf.contrib.layers.xavier_initializer()
+    #initial = orthogonal_initializer()
     with tf.variable_scope(scope,reuse=reuse):
         hid = linear(inp,hid_dim,'hid1',tf.nn.relu,init=initial)
         hid = linear(hid,hid_dim,'hid2',tf.nn.relu,init=initial)
@@ -66,7 +66,7 @@ for i in range(n_viter):
     tf.scalar_summary('r loss '+str(i),r_loss[i])
 '''value'''
 V = [tf.zeros((mem_dim,1))]
-for i in range(n_viter-1):
+for i in range(n_viter*2-1):
     bell = _mem_r+.9*V[i]
     new_V = tf.matmul(mem_sim,bell)
     V.append(new_V)
@@ -113,17 +113,18 @@ step_r = []
 for i in range(n_viter):
     r.append(np.zeros((mb_dim,1)))
     step_r.append(np.zeros((mb_dim,1)))
-for j in range(mem_dim):
-    S[j] = env.observation_space.sample()
-    SPrime[j],R[j],_ = env.get_transition(S[j],0)
-print('MEM: ','pos: ',R[R>0].sum())
 for i in range(int(1e5)):
+    env.gen_goal()
     for j in range(mb_dim):
         s[j] = env.observation_space.sample()
         cur_s = s[j]
         for k in range(n_viter):
             cur_s,r[k][j],_ = env.get_transition(cur_s,0)
     #print('MB: ','pos: ',r[0][r[0]>0].sum(),r[1][r[1]>0].sum(),r[2][r[2]>0].sum())
+    for j in range(mem_dim):
+        S[j] = env.observation_space.sample()
+        SPrime[j],R[j],_ = env.get_transition(S[j],0)
+    #print('MEM: ','pos: ',R[R>0].sum())
     feed_dict = {_s:s,_mem_s:S,_mem_r:R,_mem_sPrime:SPrime}
     for j in range(n_viter):
         feed_dict[_r[j]] = r[j]
@@ -148,19 +149,19 @@ for i in range(int(1e5)):
         plt.subplot(2, 2, 1)
         plt.scatter(Xs,Ys,s=bub_size,c=step_r[0])
         plt.subplot(2, 2, 2)
-        plt.scatter(Xs,Ys,s=bub_size,c=step_r[1])
+        plt.scatter(Xs,Ys,s=bub_size,c=step_r[int(n_viter/2)])
         plt.subplot(2, 2, 3)
-        plt.scatter(Xs,Ys,s=bub_size,c=step_r[2])
+        plt.scatter(Xs,Ys,s=bub_size,c=step_r[-1])
         plt.subplot(2, 2, 4)
-        plt.scatter(Xs,Ys,s=bub_size,c=value[:,0])#c=np.log(value[:,0]+1e-10))
+        plt.scatter(Xs,Ys,s=bub_size,c=value[:,0])#np.log(value[:,0]+1e-10))
         plt.figure(2)
         plt.clf()
         plt.subplot(2, 2, 1)
         plt.scatter(Xs,Ys,s=bub_size,c=r[0])
         plt.subplot(2, 2, 2)
-        plt.scatter(Xs,Ys,s=bub_size,c=r[1])
+        plt.scatter(Xs,Ys,s=bub_size,c=r[int(n_viter/2)])
         plt.subplot(2, 2, 3)
-        plt.scatter(Xs,Ys,s=bub_size,c=r[2])
+        plt.scatter(Xs,Ys,s=bub_size,c=r[-1])
         plt.figure(3)
         plt.clf()
         plt.scatter(Xs,Ys,s=bub_size,c=(cum_diff))

@@ -118,7 +118,7 @@ plt.show()
 class Cycle(object):
     step_size = 1.0
     goal_size = 2.0
-    cycle_size = 10
+    cycle_size = 20
     def encode(self,obs):
         if self.one_hot:
             return np.argmax(obs,-1)
@@ -131,13 +131,14 @@ class Cycle(object):
             return zeros
         else:
             return s/Cycle.cycle_size
+    def gen_goal(self):
+        self.goal = np.random.randint(self.cycle_size-1)
+        print(self.goal)
     def _new_state(self):
         #return self.decode(np.random.rand()*Cycle.cycle_size)
         return self.decode(np.random.randint(Cycle.cycle_size))
-    @staticmethod
-    def get_reward(SPrime):
-        goal = 5
-        in_goal = SPrime > goal and SPrime < (goal+Cycle.goal_size)
+    def get_reward(self,SPrime):
+        in_goal = SPrime > self.goal and SPrime < (self.goal+Cycle.goal_size)
         if in_goal:
             r = 1
         else:
@@ -149,6 +150,7 @@ class Cycle(object):
             s_dim = Cycle.cycle_size
         else:
             s_dim = 1
+        self.gen_goal()
         self.observation_space = ObservationSpace(s_dim,lambda: self._new_state())
         self.reset()
         self.action_space = ActionSpace(n_actions)

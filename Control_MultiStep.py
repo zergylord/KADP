@@ -13,6 +13,7 @@ print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
 env = simple_env.Cycle(2,one_hot=True)
 ''' hyper parameters'''
 s_dim = env.observation_space.shape
+n_actions = env.action_space.n
 hid_dim = 128
 z_dim = 64
 lr = 1e-4
@@ -53,48 +54,69 @@ def kl(p,q):
 def mse(o,t):
     return tf.reduce_mean(tf.reduce_sum(tf.square(o-t),-1))
 _s = tf.placeholder(tf.float32,shape=(None,s_dim))
+_a = []
 _r = []
 _sPrime = []
 for i in range(n_viter):
-    _r.append(tf.placeholder(tf.float32,shape=(None,1)))
+    _r.append(tf.placeholder(tf.float32,shape=(None,)))
+    _a.append(tf.placeholder(tf.int32,shape=(None,)))
     _sPrime.append(tf.placeholder(tf.float32,shape=(None,s_dim)))
-_mem_s = tf.placeholder(tf.float32,shape=(None,s_dim))
-_mem_r = tf.placeholder(tf.float32,shape=(None,1))
-_mem_sPrime = tf.placeholder(tf.float32,shape=(None,s_dim))
-'''embedings'''
-mem_z = make_encoder(_mem_s)
-mem_zPrime = make_encoder(_mem_sPrime,reuse=True)
+_mem_s = []
+_mem_r = []
+_mem_sPrime = []
+mem_z = []
+mem_zPrime = []
+for a in range(n_actions):
+    _mem_s.append(tf.placeholder(tf.float32,shape=(None,s_dim)))
+    _mem_r.append(tf.placeholder(tf.float32,shape=(None,)))
+    _mem_sPrime.append(tf.placeholder(tf.float32,shape=(None,s_dim)))
+    '''embedings'''
+    if a == 0:
+        mem_z.append(make_encoder(_mem_s[a]))
+    else:
+        mem_z.append(make_encoder(_mem_s[a],reuse=True))
+    mem_zPrime.append(make_encoder(_mem_sPrime[a],reuse=True))
+mem_z_view = tf.concat(0,mem_z)
+mem_zPrime_view = tf.concat(0,mem_zPrime)
 z = make_encoder(_s,reuse=True)
 zPrime = []
 simPrime = []
 for i in range(n_viter):
     zPrime.append(make_encoder(_sPrime[i],reuse=True))
-    simPrime.append(kernel(zPrime[i],mem_z)[0])
+    simPrime.append(kernel(zPrime[i],mem_z_view)[0])
 
 '''similarity'''
-sim,_ = kernel(z,mem_z)
-mem_sim,_ = kernel(mem_zPrime,mem_z)
+sim,_ = kernel(z,tf.gather(mem_z,_a[0]))
+mem_sim = []
+for a in range(n_actions):
+    mem_sim.append(kernel(mem_zPrime_view,mem_z[a])[0])
+#TODO: get just the correct action from mem_zPrime for mem_sim in the multistep r
 pred_r = []
 r_loss = []
 s_loss = []
 cur_sim = []
-cur_sim.append(np.eye(mem_dim,dtype=np.float32))
 for i in range(n_viter):
     cur_gamma = 1.0**i
-    pred_r.append(cur_gamma*tf.matmul(sim,tf.matmul(cur_sim[i],_mem_r)))
-    cur_sim.append(tf.matmul(cur_sim[i],mem_sim))
-    s_loss.append(kl(tf.matmul(sim,cur_sim[i+1]),simPrime[i]))
+    if i == 0:
+        cur_sim.append(np.tile(np.eye(mem_dim,dtype=np.float32),[mb_dim,1,1]))
+        weighted_R = tf.gather(_mem_r,_a[i])
+    else:
+        cur_mem_sim,_ = kernel(tf.gather(mem_zPrime,_a[i-1]),tf.expand_dims(tf.gather(mem_z,_a[i]),2))
+        cur_sim.append(tf.batch_matmul(cur_sim[i-1],cur_mem_sim))
+        weighted_R = tf.reduce_sum(cur_sim[i]*tf.expand_dims(tf.gather(_mem_r,_a[i]),1),-1)
+    pred_r.append(tf.reduce_sum(cur_gamma*sim*weighted_R,-1))
+    #s_loss.append(kl(tf.matmul(sim,cur_sim[i+1]),simPrime[i]))
+    #tf.scalar_summary('s loss '+str(i),s_loss[i])
     r_loss.append(mse(pred_r[i],_r[i]))
     tf.scalar_summary('r loss '+str(i),r_loss[i])
-    tf.scalar_summary('s loss '+str(i),s_loss[i])
 '''value'''
-V = [tf.zeros((mem_dim,1))]
+V = [tf.zeros((n_actions*mem_dim,))]
+bell = _mem_r
 for i in range(n_viter_test-1):
-    bell = _mem_r+.9*V[i]
-    new_V = tf.matmul(mem_sim,bell)
+    new_V = tf.reduce_max(tf.reduce_sum(mem_sim*tf.expand_dims(bell,1),-1),0)
     V.append(new_V)
-bell = _mem_r+.9*V[-1]
-mb_V = tf.matmul(sim,bell)
+    bell = _mem_r+.9*tf.reshape(V[i],[n_actions,mem_dim])
+mb_V = tf.reduce_sum(sim*tf.gather(bell,_a[0]),-1)
 
 '''loss'''
 loss = tf.add_n(r_loss)#+tf.add_n(s_loss)*1e-3
@@ -116,9 +138,13 @@ if tf.gfile.Exists(FLAGS.summary_dir):
     tf.gfile.MakeDirs(FLAGS.summary_dir)
 train_writer = tf.train.SummaryWriter(FLAGS.summary_dir + '/train',sess.graph)
 sess.run(tf.initialize_all_variables())
-S = np.zeros((mem_dim,s_dim))
-R = np.zeros((mem_dim,1))
-SPrime = np.zeros((mem_dim,s_dim))
+S = []
+R = []
+SPrime = []
+for i in range(n_actions):
+    S.append(np.zeros((mem_dim,s_dim)))
+    R.append(np.zeros((mem_dim,)))
+    SPrime.append(np.zeros((mem_dim,s_dim)))
 cum_loss = 0
 cum_sim_loss = 0
 s = np.zeros((mb_dim,s_dim))
@@ -127,11 +153,13 @@ plt.ion()
 '''grid of points'''
 refresh = int(1e2)
 bub_size = 50
+act = []
 r = []
 step_r = []
 sPrime = []
 for i in range(n_viter):
-    r.append(np.zeros((mb_dim,1)))
+    r.append(np.zeros((mb_dim,)))
+    act.append(np.zeros((mb_dim,)))
     step_r.append(np.zeros((mb_dim,1)))
     sPrime.append(np.zeros((mb_dim,s_dim)))
 for i in range(int(1e7)):
@@ -139,16 +167,23 @@ for i in range(int(1e7)):
         s[j] = env.observation_space.sample()
         cur_s = s[j]
         for k in range(n_viter):
-            cur_s,r[k][j],_ = env.get_transition(cur_s,0)
+            act[k][j] = np.random.randint(n_actions)
+            cur_s,r[k][j],_ = env.get_transition(cur_s,act[k][j])
             sPrime[k][j,:] = cur_s
     #print('MB: ','pos: ',r[0][r[0]>0].sum(),r[1][r[1]>0].sum(),r[2][r[2]>0].sum())
     for j in range(mem_dim):
-        S[j] = env.observation_space.sample()
-        SPrime[j],R[j],_ = env.get_transition(S[j],0)
+        for a in range(n_actions):
+            S[a][j] = env.observation_space.sample()
+            SPrime[a][j],R[a][j],_ = env.get_transition(S[a][j],a)
     #print('MEM: ','pos: ',R[R>0].sum())
-    feed_dict = {_s:s,_mem_s:S,_mem_r:R,_mem_sPrime:SPrime}
+    feed_dict = {_s:s}
+    for a in range(n_actions):
+        feed_dict[_mem_s[a]] = S[a]
+        feed_dict[_mem_r[a]] = R[a]
+        feed_dict[_mem_sPrime[a]] = SPrime[a]
     for j in range(n_viter):
         feed_dict[_r[j]] = r[j]
+        feed_dict[_a[j]] = act[j]
         feed_dict[_sPrime[j]] = sPrime[j]
     summary,_,cur_loss,*step_r = sess.run([merged,train_step,loss,*pred_r],feed_dict=feed_dict)
     #assert np.any(step_r[0] != step_r[1])
@@ -199,7 +234,7 @@ for i in range(int(1e7)):
             plt.subplot(2, 2, 3)
             plt.bar(pos,step_r[-1])
             plt.subplot(2, 2, 4)
-            plt.bar(pos,value[:,0])
+            plt.bar(pos,value)
 
         plt.pause(.01)
     #env.gen_goal()

@@ -14,12 +14,13 @@ env = simple_env.Cycle(2,one_hot=True)
 ''' hyper parameters'''
 s_dim = env.observation_space.shape
 n_actions = env.action_space.n
+print(n_actions)
 hid_dim = 128
 z_dim = 64
 lr = 1e-4
-mb_dim = 100
+mb_dim = 200
 mem_dim = 100
-n_viter = 3
+n_viter = 5
 n_viter_test = 20
 '''setup graph'''
 def make_encoder(inp,scope='encoder',reuse=False):
@@ -34,17 +35,17 @@ eps = 1e-10
 def kernel(z,mem_z,mother='rbf'):
     if mother == 'rbf':
         b = 1
-        rbf = tf.exp(-tf.reduce_sum(tf.square(tf.expand_dims(z,1)-mem_z),-1)/b) 
+        rbf = tf.exp(-tf.reduce_sum(tf.square(tf.expand_dims(z,-2)-mem_z),-1)/b) 
         normed = rbf/tf.reduce_sum(rbf,-1,keep_dims=True)
         return normed,rbf
     elif mother == 'dot':
-        dot = tf.reduce_sum(tf.expand_dims(z,1)*mem_z,-1)
+        dot = tf.reduce_sum(tf.expand_dims(z,-2)*mem_z,-1)
         return tf.nn.softmax(dot),dot
         #return (dot+1)/tf.reduce_sum(dot+1),dot
     elif mother == 'cosine':
         inv_mag_z = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(z),-1,keep_dims=True),eps,float("inf")))
         inv_mag_mem_z = tf.rsqrt(tf.clip_by_value(tf.reduce_sum(tf.square(mem_z),-1,keep_dims=True),eps,float("inf")))
-        dot = tf.reduce_sum(tf.expand_dims(z,1)*mem_z,-1)*inv_mag_z*inv_mag_mem_z
+        dot = tf.reduce_sum(tf.expand_dims(z,-2)*mem_z,-1)*inv_mag_z*inv_mag_mem_z
         #return tf.nn.softmax(dot),dot
         return (dot+1)/tf.reduce_sum(dot+1),dot
     else:
@@ -101,7 +102,7 @@ for i in range(n_viter):
         cur_sim.append(np.tile(np.eye(mem_dim,dtype=np.float32),[mb_dim,1,1]))
         weighted_R = tf.gather(_mem_r,_a[i])
     else:
-        cur_mem_sim,_ = kernel(tf.gather(mem_zPrime,_a[i-1]),tf.expand_dims(tf.gather(mem_z,_a[i]),2))
+        cur_mem_sim,_ = kernel(tf.gather(mem_zPrime,_a[i-1]),tf.expand_dims(tf.gather(mem_z,_a[i]),-3))
         cur_sim.append(tf.batch_matmul(cur_sim[i-1],cur_mem_sim))
         weighted_R = tf.reduce_sum(cur_sim[i]*tf.expand_dims(tf.gather(_mem_r,_a[i]),1),-1)
     pred_r.append(tf.reduce_sum(cur_gamma*sim*weighted_R,-1))
@@ -117,6 +118,12 @@ for i in range(n_viter_test-1):
     V.append(new_V)
     bell = _mem_r+.9*tf.reshape(V[i],[n_actions,mem_dim])
 mb_V = tf.reduce_sum(sim*tf.gather(bell,_a[0]),-1)
+Q = []
+grid_s = np.eye(s_dim)
+grid_z = make_encoder(tf.constant(grid_s,dtype=tf.float32),reuse=True)
+for a in range(n_actions):
+    grid_sim,_ = kernel(grid_z,mem_z[a])
+    Q.append(tf.reduce_sum(grid_sim*bell[a],-1))
 
 '''loss'''
 loss = tf.add_n(r_loss)#+tf.add_n(s_loss)*1e-3
@@ -190,7 +197,8 @@ for i in range(int(1e7)):
     train_writer.add_summary(summary)
     cum_loss += cur_loss
     if i % refresh == 0:
-        value = sess.run(mb_V,feed_dict=feed_dict)
+        qvals = [np.zeros(s_dim)]*n_actions
+        value,*qvals = sess.run([mb_V,*Q],feed_dict=feed_dict)
         #print(R.sum())
         cum_diff = 0
         for j in range(n_viter):
@@ -235,6 +243,15 @@ for i in range(int(1e7)):
             plt.bar(pos,step_r[-1])
             plt.subplot(2, 2, 4)
             plt.bar(pos,value)
+
+            plt.figure(2)
+            plt.clf()
+            plt.subplot(3,1,1)
+            plt.bar(np.arange(s_dim),qvals[0])
+            plt.subplot(3,1,2)
+            plt.bar(np.arange(s_dim),qvals[1])
+            plt.subplot(3,1,3)
+            plt.bar(np.arange(s_dim),qvals[1]-qvals[0])
 
         plt.pause(.01)
     #env.gen_goal()

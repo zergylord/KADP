@@ -117,7 +117,7 @@ plt.show()
 '''
 class Cycle(object):
     step_size = 1.0
-    goal_size = 2.0
+    goal_size = 1.0
     cycle_size = 20
     def encode(self,obs):
         if self.one_hot:
@@ -138,11 +138,15 @@ class Cycle(object):
         #return self.decode(np.random.rand()*Cycle.cycle_size)
         return self.decode(np.random.randint(Cycle.cycle_size))
     def get_reward(self,SPrime):
-        in_goal = SPrime > self.goal and SPrime < (self.goal+Cycle.goal_size)
+        in_goal = SPrime >= self.goal and SPrime < (self.goal+Cycle.goal_size)
+        antigoal = self.goal+1
+        in_antigoal = SPrime >= antigoal and SPrime < (antigoal+Cycle.goal_size)
         if in_goal:
             r = 1
+        elif in_antigoal:
+            r = -.5
         else:
-            r = -.1
+            r = -.1#*(1-np.abs(self.goal-SPrime)/self.cycle_size)
         return r,False
     def __init__(self,n_actions = 2,one_hot = True):
         self.one_hot = one_hot

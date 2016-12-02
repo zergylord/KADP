@@ -11,6 +11,7 @@ tf.set_random_seed(111)
 '''
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
 env = simple_env.Cycle(2,one_hot=True)
+#env = simple_env.Simple(3)
 ''' hyper parameters'''
 s_dim = env.observation_space.shape
 n_actions = env.action_space.n
@@ -87,27 +88,32 @@ for i in range(n_viter):
     simPrime.append(kernel(zPrime[i],mem_z_view)[0])
 
 '''similarity'''
-sim,_ = kernel(z,tf.gather(mem_z,_a[0]))
+U,_ = kernel(z,tf.gather(mem_z,_a[0]))
+full_U,_ = kernel(z,mem_z_view)
 mem_sim = []
 for a in range(n_actions):
     mem_sim.append(kernel(mem_zPrime_view,mem_z[a])[0])
+full_mem_sim,_ = kernel(mem_zPrime_view,mem_z_view)
 #TODO: get just the correct action from mem_zPrime for mem_sim in the multistep r
 pred_r = []
 r_loss = []
 s_loss = []
 cur_sim = []
+full_sim = []
 for i in range(n_viter):
     cur_gamma = 1.0**i
     if i == 0:
         cur_sim.append(np.tile(np.eye(mem_dim,dtype=np.float32),[mb_dim,1,1]))
+        full_sim.append(np.eye(n_actions*mem_dim,dtype=np.float32))
         weighted_R = tf.gather(_mem_r,_a[i])
     else:
         cur_mem_sim,_ = kernel(tf.gather(mem_zPrime,_a[i-1]),tf.expand_dims(tf.gather(mem_z,_a[i]),-3))
         cur_sim.append(tf.batch_matmul(cur_sim[i-1],cur_mem_sim))
         weighted_R = tf.reduce_sum(cur_sim[i]*tf.expand_dims(tf.gather(_mem_r,_a[i]),1),-1)
-    pred_r.append(tf.reduce_sum(cur_gamma*sim*weighted_R,-1))
-    #s_loss.append(kl(tf.matmul(sim,cur_sim[i+1]),simPrime[i]))
-    #tf.scalar_summary('s loss '+str(i),s_loss[i])
+        full_sim.append(tf.matmul(full_sim[i-1],full_mem_sim))
+        s_loss.append(kl(tf.matmul(full_U,full_sim[i]),simPrime[i-1]))
+        tf.scalar_summary('s loss '+str(i-1),s_loss[i-1])
+    pred_r.append(tf.reduce_sum(cur_gamma*U*weighted_R,-1))
     r_loss.append(mse(pred_r[i],_r[i]))
     tf.scalar_summary('r loss '+str(i),r_loss[i])
 '''value'''
@@ -117,16 +123,14 @@ for i in range(n_viter_test-1):
     new_V = tf.reduce_max(tf.reduce_sum(mem_sim*tf.expand_dims(bell,1),-1),0)
     V.append(new_V)
     bell = _mem_r+.9*tf.reshape(V[i],[n_actions,mem_dim])
-mb_V = tf.reduce_sum(sim*tf.gather(bell,_a[0]),-1)
+mb_V = tf.reduce_sum(U*tf.gather(bell,_a[0]),-1)
 Q = []
-grid_s = np.eye(s_dim)
-grid_z = make_encoder(tf.constant(grid_s,dtype=tf.float32),reuse=True)
 for a in range(n_actions):
-    grid_sim,_ = kernel(grid_z,mem_z[a])
-    Q.append(tf.reduce_sum(grid_sim*bell[a],-1))
+    U_a,_ = kernel(z,mem_z[a])
+    Q.append(tf.reduce_sum(U_a*bell[a],-1))
 
 '''loss'''
-loss = tf.add_n(r_loss)#+tf.add_n(s_loss)*1e-3
+loss = tf.add_n(r_loss)+tf.add_n(s_loss)*1e-3
 tf.scalar_summary('net loss',loss)
 optim = tf.train.AdamOptimizer(lr)
 grads_and_vars = optim.compute_gradients(loss)
@@ -197,8 +201,7 @@ for i in range(int(1e7)):
     train_writer.add_summary(summary)
     cum_loss += cur_loss
     if i % refresh == 0:
-        qvals = [np.zeros(s_dim)]*n_actions
-        value,*qvals = sess.run([mb_V,*Q],feed_dict=feed_dict)
+        value = sess.run(mb_V,feed_dict=feed_dict)
         #print(R.sum())
         cum_diff = 0
         for j in range(n_viter):
@@ -219,7 +222,7 @@ for i in range(int(1e7)):
             plt.subplot(2, 2, 3)
             plt.scatter(Xs,Ys,s=bub_size,c=step_r[-1])
             plt.subplot(2, 2, 4)
-            plt.scatter(Xs,Ys,s=bub_size,c=value[:,0])#np.log(value[:,0]+1e-10))
+            plt.scatter(Xs,Ys,s=bub_size,c=value)#np.log(value[:,0]+1e-10))
             plt.figure(2)
             plt.clf()
             plt.subplot(2, 2, 1)
@@ -232,6 +235,10 @@ for i in range(int(1e7)):
             plt.clf()
             plt.scatter(Xs,Ys,s=bub_size,c=(cum_diff))
         else:
+            qvals = [np.zeros(s_dim)]*n_actions
+            feed_dict[_s] = np.eye(s_dim)
+            qvals = sess.run(Q,feed_dict=feed_dict)
+
             pos = env.encode(s)
             plt.figure(1)
             plt.clf()

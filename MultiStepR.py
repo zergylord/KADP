@@ -10,7 +10,8 @@ np.random.seed(111)
 tf.set_random_seed(111)
 '''
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
-env = simple_env.Cycle(2,one_hot=True)
+#env = simple_env.Cycle(2,one_hot=True)
+env = simple_env.Simple(3)
 ''' hyper parameters'''
 s_dim = env.observation_space.shape
 hid_dim = 128
@@ -97,7 +98,7 @@ bell = _mem_r+.9*V[-1]
 mb_V = tf.matmul(sim,bell)
 
 '''loss'''
-loss = tf.add_n(r_loss)#+tf.add_n(s_loss)*1e-3
+loss = tf.add_n(r_loss)+tf.add_n(s_loss)*1e-3
 tf.scalar_summary('net loss',loss)
 optim = tf.train.AdamOptimizer(lr)
 grads_and_vars = optim.compute_gradients(loss)

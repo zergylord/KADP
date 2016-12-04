@@ -50,10 +50,10 @@ class Simple(object):
         return Simple.decode((np.random.rand(2)-.5)*2*Simple.limit)
     observation_space = ObservationSpace(2,lambda: Simple._new_state())
     def get_reward(self,SPrime):
-        term = ((SPrime[0] > self.x_goal)
-                 *(SPrime[0] < self.x_goal+1)
-                 *(SPrime[1] > self.y_goal)
-                 *(SPrime[1] < self.y_goal+1))
+        term = ((SPrime[0] >= self.x_goal)
+                 *(SPrime[0] < self.x_goal+self.radius*4)
+                 *(SPrime[1] >= self.y_goal)
+                 *(SPrime[1] < self.y_goal+self.radius*4))
         return np.float32(term),term
         #return -1,term
     def gen_goal(self):

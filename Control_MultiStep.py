@@ -5,23 +5,32 @@ import time
 cur_time = time.clock()
 import numpy as np
 from Utils import simple_env
+import gym
 '''
 np.random.seed(111)
 tf.set_random_seed(111)
 '''
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
-env = simple_env.Cycle(2,one_hot=True)
-#env = simple_env.Simple(3)
+#env = simple_env.Cycle(2,one_hot=True)
+env = gym.make('Pendulum-v0')
+#env = simple_env.Simple(4)
 ''' hyper parameters'''
 s_dim = env.observation_space.shape
-n_actions = env.action_space.n
+if not isinstance(s_dim,int):
+    s_dim = s_dim[0]
+if env.action_space.__class__ == gym.spaces.box.Box:
+    n_actions = 2
+    A = [env.action_space.low,env.action_space.high]
+else:
+    n_actions = env.action_space.n
+    A = list(range(n_actions))
 print(n_actions)
 hid_dim = 128
 z_dim = 64
-lr = 1e-4
-mb_dim = 200
+lr = 1e-3
+mb_dim = 100
 mem_dim = 100
-n_viter = 5
+n_viter = 10
 n_viter_test = 20
 '''setup graph'''
 def make_encoder(inp,scope='encoder',reuse=False):
@@ -52,7 +61,12 @@ def kernel(z,mem_z,mother='rbf'):
     else:
         print('nope')
 def kl(p,q):
-    return tf.reduce_mean(tf.reduce_sum(p*tf.log(p/q),-1))
+    eps = 1e-10
+    ratio = p/tf.clip_by_value(q,eps,np.Inf)
+    log_ratio = tf.log(tf.clip_by_value(ratio,eps,np.Inf))
+
+    #log_ratio = tf.Print(log_ratio,[tf.reduce_sum(p,-1),tf.reduce_sum(q,-1),tf.reduce_max(log_ratio),tf.reduce_min(log_ratio),tf.reduce_min(ratio)])
+    return tf.reduce_mean(tf.reduce_sum(p*log_ratio,-1))
 def mse(o,t):
     return tf.reduce_mean(tf.reduce_sum(tf.square(o-t),-1))
 _s = tf.placeholder(tf.float32,shape=(None,s_dim))
@@ -90,10 +104,12 @@ for i in range(n_viter):
 '''similarity'''
 U,_ = kernel(z,tf.gather(mem_z,_a[0]))
 full_U,_ = kernel(z,mem_z_view)
+tf.histogram_summary('U',full_U)
 mem_sim = []
 for a in range(n_actions):
     mem_sim.append(kernel(mem_zPrime_view,mem_z[a])[0])
 full_mem_sim,_ = kernel(mem_zPrime_view,mem_z_view)
+tf.histogram_summary('W',full_mem_sim)
 #TODO: get just the correct action from mem_zPrime for mem_sim in the multistep r
 pred_r = []
 r_loss = []
@@ -112,7 +128,7 @@ for i in range(n_viter):
         weighted_R = tf.reduce_sum(cur_sim[i]*tf.expand_dims(tf.gather(_mem_r,_a[i]),1),-1)
         full_sim.append(tf.matmul(full_sim[i-1],full_mem_sim))
         s_loss.append(kl(tf.matmul(full_U,full_sim[i]),simPrime[i-1]))
-        tf.scalar_summary('s loss '+str(i-1),s_loss[i-1])
+        #tf.scalar_summary('s loss '+str(i-1),s_loss[i-1])
     pred_r.append(tf.reduce_sum(cur_gamma*U*weighted_R,-1))
     r_loss.append(mse(pred_r[i],_r[i]))
     tf.scalar_summary('r loss '+str(i),r_loss[i])
@@ -130,7 +146,7 @@ for a in range(n_actions):
     Q.append(tf.reduce_sum(U_a*bell[a],-1))
 
 '''loss'''
-loss = tf.add_n(r_loss)+tf.add_n(s_loss)*1e-3
+loss = tf.add_n(r_loss)#+tf.add_n(s_loss)*1e-1
 tf.scalar_summary('net loss',loss)
 optim = tf.train.AdamOptimizer(lr)
 grads_and_vars = optim.compute_gradients(loss)
@@ -163,29 +179,29 @@ import matplotlib.pyplot as plt
 plt.ion()
 '''grid of points'''
 refresh = int(1e2)
-bub_size = 50
+bub_size = 100
 act = []
 r = []
 step_r = []
 sPrime = []
 for i in range(n_viter):
     r.append(np.zeros((mb_dim,)))
-    act.append(np.zeros((mb_dim,)))
+    act.append(np.zeros((mb_dim,),dtype=np.int32))
     step_r.append(np.zeros((mb_dim,1)))
     sPrime.append(np.zeros((mb_dim,s_dim)))
 for i in range(int(1e7)):
     for j in range(mb_dim):
-        s[j] = env.observation_space.sample()
+        s[j] = env.reset()#env.observation_space.sample()
         cur_s = s[j]
         for k in range(n_viter):
             act[k][j] = np.random.randint(n_actions)
-            cur_s,r[k][j],_ = env.get_transition(cur_s,act[k][j])
+            cur_s,r[k][j],_,_ = env.step(A[act[k][j]])#env.get_transition(cur_s,act[k][j])
             sPrime[k][j,:] = cur_s
     #print('MB: ','pos: ',r[0][r[0]>0].sum(),r[1][r[1]>0].sum(),r[2][r[2]>0].sum())
     for j in range(mem_dim):
         for a in range(n_actions):
-            S[a][j] = env.observation_space.sample()
-            SPrime[a][j],R[a][j],_ = env.get_transition(S[a][j],a)
+            S[a][j] = env.reset()#env.observation_space.sample()
+            SPrime[a][j],R[a][j],_,_ = env.step(A[a])#env.get_transition(S[a][j],a)
     #print('MEM: ','pos: ',R[R>0].sum())
     feed_dict = {_s:s}
     for a in range(n_actions):
@@ -196,7 +212,7 @@ for i in range(int(1e7)):
         feed_dict[_r[j]] = r[j]
         feed_dict[_a[j]] = act[j]
         feed_dict[_sPrime[j]] = sPrime[j]
-    summary,_,cur_loss,*step_r = sess.run([merged,train_step,loss,*pred_r],feed_dict=feed_dict)
+    _,summary,_,cur_loss,*step_r = sess.run([check_op,merged,train_step,loss,*pred_r],feed_dict=feed_dict)
     #assert np.any(step_r[0] != step_r[1])
     train_writer.add_summary(summary)
     cum_loss += cur_loss
@@ -233,8 +249,20 @@ for i in range(int(1e7)):
             plt.scatter(Xs,Ys,s=bub_size,c=r[-1])
             plt.figure(3)
             plt.clf()
-            plt.scatter(Xs,Ys,s=bub_size,c=(cum_diff))
-        else:
+            offX = .5*env.radius*np.cos(env.rad_inc*np.arange(n_actions))
+            offY = .5*env.radius*np.sin(env.rad_inc*np.arange(n_actions))
+            plt.hold(True)
+            mb_q_values = np.asarray(sess.run(Q,feed_dict=feed_dict))
+            mb_values = np.max(mb_q_values,0)
+            for action in range(n_actions):
+                mask = np.argmax(mb_q_values,0) == action
+                plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
+            plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
+            axes = plt.gca()
+            axes.set_xlim([-env.limit,env.limit])
+            axes.set_ylim([-env.limit,env.limit])
+            plt.hold(False)
+        elif env.__class__ == simple_env.Cycle:
             qvals = [np.zeros(s_dim)]*n_actions
             feed_dict[_s] = np.eye(s_dim)
             qvals = sess.run(Q,feed_dict=feed_dict)

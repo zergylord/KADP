@@ -125,7 +125,7 @@ for i in range(n_viter):
         weighted_R = tf.reduce_sum(cur_sim[i]*tf.expand_dims(tf.gather(_mem_r,_a[i]),1),-1)
         full_sim.append(tf.matmul(full_sim[i-1],full_mem_sim))
         s_loss.append(mse(tf.matmul(full_U,full_sim[i]),simPrime[i-1]))
-        tf.scalar_summary('s loss '+str(i-1),s_loss[i-1])
+        #tf.scalar_summary('s loss '+str(i-1),s_loss[i-1])
     pred_r.append(tf.reduce_sum(cur_gamma*U*weighted_R,-1))
     r_loss.append(mse(pred_r[i],_r[i]))
     tf.scalar_summary('r loss '+str(i),r_loss[i])
@@ -143,7 +143,7 @@ for a in range(n_actions):
     Q.append(tf.reduce_sum(U_a*bell[a],-1))
 
 '''loss'''
-loss = tf.add_n(r_loss)+tf.add_n(s_loss)*1e-4
+loss = tf.add_n(r_loss)#+tf.add_n(s_loss)*1e-4
 tf.scalar_summary('net loss',loss)
 optim = tf.train.AdamOptimizer(lr)
 grads_and_vars = optim.compute_gradients(loss)

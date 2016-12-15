@@ -118,7 +118,7 @@ plt.show()
 class Cycle(object):
     step_size = 1.0
     goal_size = 1.0
-    cycle_size = 20
+    cycle_size = 40
     def encode(self,obs):
         if self.one_hot:
             return np.argmax(obs,-1)
@@ -167,6 +167,69 @@ class Cycle(object):
             sPrime = (s + Cycle.step_size) % Cycle.cycle_size
         else:
             sPrime = (s - Cycle.step_size) % Cycle.cycle_size
+        r,term = self.get_reward(sPrime)
+        sPrime = self.decode(sPrime)
+        return sPrime,r,term
+    def step(self,a):    
+        sPrime,r,term = self.get_transition(self.s,a)
+        self.s = sPrime
+        return sPrime,r,term,False
+
+class Grid(object):
+    side_size = 10
+    #for completeness with the continous version
+    radius = .25
+    rad_inc = 2*np.pi/4
+    def encode(self,obs):
+        if self.one_hot:
+            ind = np.flatnonzero(obs)[0]
+            return np.asarray([ind//self.side_size,ind%self.side_size])
+        else:
+            return obs*Grid.side_size
+    def decode(self,s):
+        if self.one_hot:
+            zeros = np.zeros((Grid.side_size**2,))
+            zeros[s[0]*self.side_size+s[1]] = 1
+            return zeros
+        else:
+            return s/Grid.side_size
+    def gen_goal(self):
+        self.goal = np.random.randint(self.side_size,size=(2,))
+        print(self.goal)
+    def _new_state(self):
+        return self.decode(np.random.randint(Grid.side_size,size=(2,)))
+    def get_reward(self,SPrime):
+        in_goal = np.all(SPrime == self.goal)
+        if in_goal:
+            r = 1
+        else:
+            r = -.1
+        return r,False
+    def __init__(self,one_hot = True):
+        self.one_hot = one_hot
+        if self.one_hot:
+            s_dim = Grid.side_size**2
+        else:
+            s_dim = 2
+        n_actions = 4
+        self.gen_goal()
+        self.observation_space = ObservationSpace(s_dim,lambda: self._new_state())
+        self.reset()
+        self.action_space = ActionSpace(n_actions)
+    def reset(self):
+        self.s = self._new_state()
+        return self.s
+    def get_transition(self,obs,a):
+        s = self.encode(obs)
+        max_s = np.asarray([self.side_size,self.side_size])
+        if a == 0:#right
+            sPrime = (s + [0,1]) %max_s
+        elif a == 1:#up
+            sPrime = (s - [1,0]) %max_s
+        elif a == 2:#left
+            sPrime = (s - [0,1]) %max_s
+        elif a == 3:#down
+            sPrime = (s + [1,0]) %max_s
         r,term = self.get_reward(sPrime)
         sPrime = self.decode(sPrime)
         return sPrime,r,term

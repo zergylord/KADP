@@ -9,9 +9,10 @@ import gym
 np.random.seed(111)
 tf.set_random_seed(111)
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
-#env = simple_env.Cycle(2,one_hot=True)
 env = gym.make('Pendulum-v0')
 #env = simple_env.Simple(4)
+env = simple_env.Grid(one_hot=True)
+#env = simple_env.Cycle(2,one_hot=True)
 ''' hyper parameters'''
 s_dim = env.observation_space.shape
 if not isinstance(s_dim,int):
@@ -24,11 +25,11 @@ else:
     A = list(range(n_actions))
 print(n_actions)
 hid_dim = 128
-z_dim = 64
-lr = 1e-3
+z_dim = 2
+lr = 4e-4
 mb_dim = 32
-mem_dim = 100
-n_viter = 10
+mem_dim = 400
+n_viter = 20
 n_viter_test = 20
 '''setup graph'''
 def make_encoder(inp,scope='encoder',reuse=False):
@@ -44,7 +45,7 @@ def kernel(z,mem_z,mother='rbf'):
     if mother == 'rbf':
         b = 1
         rbf = tf.exp(-tf.reduce_sum(tf.square(tf.expand_dims(z,-2)-mem_z),-1)/b) 
-        normed = rbf/tf.reduce_sum(rbf,-1,keep_dims=True)
+        normed = rbf/tf.clip_by_value(tf.reduce_sum(rbf,-1,keep_dims=True),eps,float("inf"))
         return normed,rbf
     elif mother == 'dot':
         dot = tf.reduce_sum(tf.expand_dims(z,-2)*mem_z,-1)
@@ -59,7 +60,7 @@ def kernel(z,mem_z,mother='rbf'):
     else:
         print('nope')
 def kl(p,q):
-    eps = 1e-8
+    eps = 1e-10
     ratio = p/tf.clip_by_value(q,eps,np.Inf)
     log_ratio = tf.log(tf.clip_by_value(ratio,eps,np.Inf))
 
@@ -124,7 +125,7 @@ for i in range(n_viter):
         cur_sim.append(tf.batch_matmul(cur_sim[i-1],cur_mem_sim))
         weighted_R = tf.reduce_sum(cur_sim[i]*tf.expand_dims(tf.gather(_mem_r,_a[i]),1),-1)
         full_sim.append(tf.matmul(full_sim[i-1],full_mem_sim))
-        s_loss.append(mse(tf.matmul(full_U,full_sim[i]),simPrime[i-1]))
+        s_loss.append(kl(tf.matmul(full_U,full_sim[i]),simPrime[i-1]))
         #tf.scalar_summary('s loss '+str(i-1),s_loss[i-1])
     pred_r.append(tf.reduce_sum(cur_gamma*U*weighted_R,-1))
     r_loss.append(mse(pred_r[i],_r[i]))
@@ -143,11 +144,12 @@ for a in range(n_actions):
     Q.append(tf.reduce_sum(U_a*bell[a],-1))
 
 '''loss'''
-loss = tf.add_n(r_loss)#+tf.add_n(s_loss)*1e-4
+loss = tf.add_n(r_loss)#+tf.add_n(s_loss)*1e0
 tf.scalar_summary('net loss',loss)
 optim = tf.train.AdamOptimizer(lr)
 grads_and_vars = optim.compute_gradients(loss)
 grad_summaries = [tf.histogram_summary('poo'+v.name,g) if g is not None else '' for g,v in grads_and_vars]
+#capped_grads_and_vars = [(tf.clip_by_value(gv[0],-1,1),gv[1]) for gv in grads_and_vars]
 train_step = optim.apply_gradients(grads_and_vars)
 
 #check_op = tf.add_check_numerics_ops()
@@ -206,7 +208,7 @@ for i in range(int(1e7)):
             for a in range(n_actions):
                 cached_dict[mem_z[a]] = cached_mem_z[a]
         s[j] = env.reset()#env.observation_space.sample()
-        cur_s = s[j]
+        cur_s = s[j].copy()
         for k in range(n_viter):
             if np.random.rand() < epsilon:
                 act[k][j] = np.random.randint(n_actions)
@@ -237,9 +239,17 @@ for i in range(int(1e7)):
         cumr = 0
         cur_time = time.clock()
         cum_loss = 0
-        if s_dim == 2: 
+        if s_dim == 2 or env.__class__ == simple_env.Grid: 
+            '''
             Xs = env.encode(s[:,0])
             Ys = env.encode(s[:,1])
+            '''
+            Xs = np.zeros((len(s),))
+            Ys = np.zeros((len(s),))
+            for state in range(len(s)):
+                encoded = env.encode(s[state])
+                Xs[state] = encoded[0]
+                Ys[state] = encoded[1]
             plt.figure(1)
             plt.clf()
             plt.subplot(2, 2, 1)
@@ -270,8 +280,10 @@ for i in range(int(1e7)):
                 plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
             plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
             axes = plt.gca()
+            '''
             axes.set_xlim([-env.limit,env.limit])
             axes.set_ylim([-env.limit,env.limit])
+            '''
             plt.hold(False)
         elif env.__class__ == simple_env.Cycle:
             qvals = [np.zeros(s_dim)]*n_actions

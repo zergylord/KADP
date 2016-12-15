@@ -13,7 +13,7 @@ tf.set_random_seed(111)
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
 #env = simple_env.Cycle(2,one_hot=True)
 env = gym.make('Pendulum-v0')
-#env = simple_env.Simple(4)
+env = simple_env.Simple(4)
 ''' hyper parameters'''
 s_dim = env.observation_space.shape
 if not isinstance(s_dim,int):

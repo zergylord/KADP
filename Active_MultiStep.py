@@ -6,6 +6,13 @@ cur_time = time.clock()
 import numpy as np
 from Utils import simple_env
 import gym
+import os
+if 'DISPLAY' in os.environ:
+    display = True
+    from matplotlib import pyplot as plt
+    plt.ion()
+else:
+    display = False
 np.random.seed(111)
 tf.set_random_seed(111)
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
@@ -174,8 +181,6 @@ for i in range(n_actions):
 cum_loss = 0
 cum_sim_loss = 0
 s = np.zeros((mb_dim,s_dim))
-import matplotlib.pyplot as plt
-plt.ion()
 '''grid of points'''
 refresh = int(1e2)
 bub_size = 100
@@ -239,77 +244,78 @@ for i in range(int(1e7)):
         cumr = 0
         cur_time = time.clock()
         cum_loss = 0
-        if s_dim == 2 or env.__class__ == simple_env.Grid: 
-            '''
-            Xs = env.encode(s[:,0])
-            Ys = env.encode(s[:,1])
-            '''
-            Xs = np.zeros((len(s),))
-            Ys = np.zeros((len(s),))
-            for state in range(len(s)):
-                encoded = env.encode(s[state])
-                Xs[state] = encoded[0]
-                Ys[state] = encoded[1]
-            plt.figure(1)
-            plt.clf()
-            plt.subplot(2, 2, 1)
-            plt.scatter(Xs,Ys,s=bub_size,c=step_r[0])
-            plt.subplot(2, 2, 2)
-            plt.scatter(Xs,Ys,s=bub_size,c=step_r[int(n_viter/2)])
-            plt.subplot(2, 2, 3)
-            plt.scatter(Xs,Ys,s=bub_size,c=step_r[-1])
-            plt.subplot(2, 2, 4)
-            plt.scatter(Xs,Ys,s=bub_size,c=value)#np.log(value[:,0]+1e-10))
-            plt.figure(2)
-            plt.clf()
-            plt.subplot(2, 2, 1)
-            plt.scatter(Xs,Ys,s=bub_size,c=r[0])
-            plt.subplot(2, 2, 2)
-            plt.scatter(Xs,Ys,s=bub_size,c=r[int(n_viter/2)])
-            plt.subplot(2, 2, 3)
-            plt.scatter(Xs,Ys,s=bub_size,c=r[-1])
-            plt.figure(3)
-            plt.clf()
-            offX = .5*env.radius*np.cos(env.rad_inc*np.arange(n_actions))
-            offY = .5*env.radius*np.sin(env.rad_inc*np.arange(n_actions))
-            plt.hold(True)
-            mb_q_values = np.asarray(sess.run(Q,feed_dict=feed_dict))
-            mb_values = np.max(mb_q_values,0)
-            for action in range(n_actions):
-                mask = np.argmax(mb_q_values,0) == action
-                plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
-            plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
-            axes = plt.gca()
-            '''
-            axes.set_xlim([-env.limit,env.limit])
-            axes.set_ylim([-env.limit,env.limit])
-            '''
-            plt.hold(False)
-        elif env.__class__ == simple_env.Cycle:
-            qvals = [np.zeros(s_dim)]*n_actions
-            feed_dict[_s] = np.eye(s_dim)
-            qvals = sess.run(Q,feed_dict=feed_dict)
+        if display:
+            if s_dim == 2 or env.__class__ == simple_env.Grid: 
+                '''
+                Xs = env.encode(s[:,0])
+                Ys = env.encode(s[:,1])
+                '''
+                Xs = np.zeros((len(s),))
+                Ys = np.zeros((len(s),))
+                for state in range(len(s)):
+                    encoded = env.encode(s[state])
+                    Xs[state] = encoded[0]
+                    Ys[state] = encoded[1]
+                plt.figure(1)
+                plt.clf()
+                plt.subplot(2, 2, 1)
+                plt.scatter(Xs,Ys,s=bub_size,c=step_r[0])
+                plt.subplot(2, 2, 2)
+                plt.scatter(Xs,Ys,s=bub_size,c=step_r[int(n_viter/2)])
+                plt.subplot(2, 2, 3)
+                plt.scatter(Xs,Ys,s=bub_size,c=step_r[-1])
+                plt.subplot(2, 2, 4)
+                plt.scatter(Xs,Ys,s=bub_size,c=value)#np.log(value[:,0]+1e-10))
+                plt.figure(2)
+                plt.clf()
+                plt.subplot(2, 2, 1)
+                plt.scatter(Xs,Ys,s=bub_size,c=r[0])
+                plt.subplot(2, 2, 2)
+                plt.scatter(Xs,Ys,s=bub_size,c=r[int(n_viter/2)])
+                plt.subplot(2, 2, 3)
+                plt.scatter(Xs,Ys,s=bub_size,c=r[-1])
+                plt.figure(3)
+                plt.clf()
+                offX = .5*env.radius*np.cos(env.rad_inc*np.arange(n_actions))
+                offY = .5*env.radius*np.sin(env.rad_inc*np.arange(n_actions))
+                plt.hold(True)
+                mb_q_values = np.asarray(sess.run(Q,feed_dict=feed_dict))
+                mb_values = np.max(mb_q_values,0)
+                for action in range(n_actions):
+                    mask = np.argmax(mb_q_values,0) == action
+                    plt.scatter(Xs[mask]+offX[action],Ys[mask]+offY[action],s=bub_size/2)
+                plt.scatter(Xs,Ys,s=bub_size,c=(mb_values))
+                axes = plt.gca()
+                '''
+                axes.set_xlim([-env.limit,env.limit])
+                axes.set_ylim([-env.limit,env.limit])
+                '''
+                plt.hold(False)
+            elif env.__class__ == simple_env.Cycle:
+                qvals = [np.zeros(s_dim)]*n_actions
+                feed_dict[_s] = np.eye(s_dim)
+                qvals = sess.run(Q,feed_dict=feed_dict)
 
-            pos = env.encode(s)
-            plt.figure(1)
-            plt.clf()
-            plt.subplot(2, 2, 1)
-            plt.bar(pos,step_r[0])
-            plt.subplot(2, 2, 2)
-            plt.bar(pos,step_r[int(n_viter/2)])
-            plt.subplot(2, 2, 3)
-            plt.bar(pos,step_r[-1])
-            plt.subplot(2, 2, 4)
-            plt.bar(pos,value)
+                pos = env.encode(s)
+                plt.figure(1)
+                plt.clf()
+                plt.subplot(2, 2, 1)
+                plt.bar(pos,step_r[0])
+                plt.subplot(2, 2, 2)
+                plt.bar(pos,step_r[int(n_viter/2)])
+                plt.subplot(2, 2, 3)
+                plt.bar(pos,step_r[-1])
+                plt.subplot(2, 2, 4)
+                plt.bar(pos,value)
 
-            plt.figure(2)
-            plt.clf()
-            plt.subplot(3,1,1)
-            plt.bar(np.arange(s_dim),qvals[0])
-            plt.subplot(3,1,2)
-            plt.bar(np.arange(s_dim),qvals[1])
-            plt.subplot(3,1,3)
-            plt.bar(np.arange(s_dim),qvals[1]-qvals[0])
+                plt.figure(2)
+                plt.clf()
+                plt.subplot(3,1,1)
+                plt.bar(np.arange(s_dim),qvals[0])
+                plt.subplot(3,1,2)
+                plt.bar(np.arange(s_dim),qvals[1])
+                plt.subplot(3,1,3)
+                plt.bar(np.arange(s_dim),qvals[1]-qvals[0])
 
         plt.pause(.01)
     #env.gen_goal()

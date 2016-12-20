@@ -223,13 +223,13 @@ class Grid(object):
         s = self.encode(obs)
         max_s = np.asarray([self.side_size,self.side_size])
         if a == 0:#right
-            sPrime = (s + [0,1]) %max_s
-        elif a == 1:#up
-            sPrime = (s - [1,0]) %max_s
-        elif a == 2:#left
-            sPrime = (s - [0,1]) %max_s
-        elif a == 3:#down
             sPrime = (s + [1,0]) %max_s
+        elif a == 1:#up
+            sPrime = (s - [0,1]) %max_s
+        elif a == 2:#left
+            sPrime = (s - [-1,0]) %max_s
+        elif a == 3:#down
+            sPrime = (s + [0,-1]) %max_s
         r,term = self.get_reward(sPrime)
         sPrime = self.decode(sPrime)
         return sPrime,r,term

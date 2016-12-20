@@ -110,12 +110,12 @@ for i in range(n_viter):
 '''similarity'''
 U,_ = kernel(z,tf.gather(mem_z,_a[0]))
 full_U,_ = kernel(z,mem_z_view)
-tf.histogram_summary('U',full_U)
+tf.summary.histogram('U',full_U)
 mem_sim = []
 for a in range(n_actions):
     mem_sim.append(kernel(mem_zPrime_view,mem_z[a])[0])
 full_mem_sim,_ = kernel(mem_zPrime_view,mem_z_view)
-tf.histogram_summary('W',full_mem_sim)
+tf.summary.histogram('W',full_mem_sim)
 pred_r = []
 r_loss = []
 s_loss = []
@@ -133,10 +133,10 @@ for i in range(n_viter):
         weighted_R = tf.reduce_sum(cur_sim[i]*tf.expand_dims(tf.gather(_mem_r,_a[i]),1),-1)
         full_sim.append(tf.matmul(full_sim[i-1],full_mem_sim))
         s_loss.append(kl(tf.matmul(full_U,full_sim[i]),simPrime[i-1]))
-        #tf.scalar_summary('s loss '+str(i-1),s_loss[i-1])
+        #tf.summary.scalar('s loss '+str(i-1),s_loss[i-1])
     pred_r.append(tf.reduce_sum(cur_gamma*U*weighted_R,-1))
     r_loss.append(mse(pred_r[i],_r[i]))
-    tf.scalar_summary('r loss '+str(i),r_loss[i])
+    tf.summary.scalar('r loss '+str(i),r_loss[i])
 '''value'''
 V = [tf.zeros((n_actions*mem_dim,))]
 bell = _mem_r
@@ -152,25 +152,25 @@ for a in range(n_actions):
 
 '''loss'''
 loss = tf.add_n(r_loss)#+tf.add_n(s_loss)*1e0
-tf.scalar_summary('net loss',loss)
+tf.summary.scalar('net loss',loss)
 optim = tf.train.AdamOptimizer(lr)
 grads_and_vars = optim.compute_gradients(loss)
-grad_summaries = [tf.histogram_summary('poo'+v.name,g) if g is not None else '' for g,v in grads_and_vars]
+grad_summaries = [tf.summary.histogram('poo'+v.name,g) if g is not None else '' for g,v in grads_and_vars]
 #capped_grads_and_vars = [(tf.clip_by_value(gv[0],-1,1),gv[1]) for gv in grads_and_vars]
 train_step = optim.apply_gradients(grads_and_vars)
 
 #check_op = tf.add_check_numerics_ops()
 check_op = tf.no_op()
 sess = tf.Session()
-merged = tf.merge_all_summaries()
+merged = tf.summary.merge_all()
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 flags.DEFINE_string('summary_dir', '/tmp/kadp', 'Summaries directory')
 if tf.gfile.Exists(FLAGS.summary_dir):
     tf.gfile.DeleteRecursively(FLAGS.summary_dir)
     tf.gfile.MakeDirs(FLAGS.summary_dir)
-train_writer = tf.train.SummaryWriter(FLAGS.summary_dir + '/train',sess.graph)
-sess.run(tf.initialize_all_variables())
+train_writer = tf.summary.FileWriter(FLAGS.summary_dir + '/train',sess.graph)
+sess.run(tf.global_variables_initializer())
 S = []
 R = []
 SPrime = []
@@ -317,7 +317,7 @@ for i in range(int(1e7)):
                 plt.subplot(3,1,3)
                 plt.bar(np.arange(s_dim),qvals[1]-qvals[0])
 
-        plt.pause(.01)
+            plt.pause(.01)
     #env.gen_goal()
 plt.ioff()
 plt.show()

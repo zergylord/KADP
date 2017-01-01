@@ -7,12 +7,14 @@ import numpy as np
 from Utils import simple_env
 import gym
 import os
+import sys
 if 'DISPLAY' in os.environ:
     display = True
     from matplotlib import pyplot as plt
     plt.ion()
 else:
     display = False
+    sys.stdout = open("goat.txt", "w")
 np.random.seed(111)
 tf.set_random_seed(111)
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())

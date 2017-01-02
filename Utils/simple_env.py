@@ -178,8 +178,8 @@ class Cycle(object):
 class Grid(object):
     side_size = 10
     #for completeness with the continous version
-    radius = .25
     rad_inc = 2*np.pi/4
+    radius = .25 #for display only
     def encode(self,obs):
         if self.one_hot:
             ind = np.flatnonzero(obs)[0]
@@ -225,9 +225,9 @@ class Grid(object):
         if a == 0:#right
             sPrime = (s + [1,0]) %max_s
         elif a == 1:#up
-            sPrime = (s - [0,1]) %max_s
+            sPrime = (s + [0,1]) %max_s
         elif a == 2:#left
-            sPrime = (s - [-1,0]) %max_s
+            sPrime = (s + [-1,0]) %max_s
         elif a == 3:#down
             sPrime = (s + [0,-1]) %max_s
         r,term = self.get_reward(sPrime)

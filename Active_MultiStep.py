@@ -33,13 +33,13 @@ else:
     n_actions = env.action_space.n
     A = list(range(n_actions))
 print(n_actions)
-hid_dim = 128
-z_dim = 2
+hid_dim = 1000
+z_dim = 8
 lr = 4e-4
 mb_dim = 32
 mem_dim = 400
-n_viter = 20
-n_viter_test = 20
+n_viter = 10
+n_viter_test = n_viter #can be higher to test for generalization
 '''setup graph'''
 def make_encoder(inp,scope='encoder',reuse=False):
     #initial = tf.contrib.layers.xavier_initializer()

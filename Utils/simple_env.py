@@ -59,6 +59,7 @@ class Simple(object):
     def gen_goal(self):
         self.x_goal = np.random.rand()*(self.limit*2-1)-self.limit
         self.y_goal = np.random.rand()*(self.limit*2-1)-self.limit
+        print('new goal:',self.x_goal,self.y_goal)
     def __init__(self,n_actions = 4):
         self.reset()
         self.gen_goal()

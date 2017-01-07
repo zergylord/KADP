@@ -14,13 +14,13 @@ if 'DISPLAY' in os.environ:
     plt.ion()
 else:
     display = False
-    sys.stdout = open("goat.txt", "w")
+    #sys.stdout = open("goat.txt", "w")
 np.random.seed(111)
 tf.set_random_seed(111)
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
 env = gym.make('Pendulum-v0')
-#env = simple_env.Simple(4)
-env = simple_env.Grid(one_hot=True)
+env = simple_env.Simple(4)
+#env = simple_env.Grid(one_hot=True)
 #env = simple_env.Cycle(2,one_hot=True)
 ''' hyper parameters'''
 s_dim = env.observation_space.shape
@@ -34,11 +34,11 @@ else:
     A = list(range(n_actions))
 print(n_actions)
 hid_dim = 1000
-z_dim = 8
+z_dim = 2
 lr = 4e-4
-mb_dim = 32
+mb_dim = 20
 mem_dim = 400
-n_viter = 10
+n_viter = 40
 n_viter_test = n_viter #can be higher to test for generalization
 '''setup graph'''
 def make_encoder(inp,scope='encoder',reuse=False):
@@ -242,7 +242,11 @@ for i in range(int(1e7)):
         for j in range(n_viter):
             cum_diff += (step_r[j] - r[j])
         cum_diff = np.squeeze(cum_diff)
-        print(i,cum_loss,cumr/refresh/mb_dim/n_viter,cum_diff.sum(),time.clock()-cur_time)
+        performance = cumr/refresh/mb_dim/n_viter
+        print(i,cum_loss,performance,cum_diff.sum(),time.clock()-cur_time)
+        if performance > .1: #task specific to 10x10 grid
+            print('+++++++++++winner+++++++++++')
+            env.gen_goal()
         cumr = 0
         cur_time = time.clock()
         cum_loss = 0
@@ -320,7 +324,6 @@ for i in range(int(1e7)):
                 plt.bar(np.arange(s_dim),qvals[1]-qvals[0])
 
             plt.pause(.01)
-    #env.gen_goal()
 plt.ioff()
 plt.show()
 

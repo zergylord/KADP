@@ -15,8 +15,8 @@ if 'DISPLAY' in os.environ:
 else:
     display = False
     #sys.stdout = open("goat.txt", "w")
-np.random.seed(111)
-tf.set_random_seed(111)
+#np.random.seed(111)
+#tf.set_random_seed(111)
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
 env = gym.make('Pendulum-v0')
 env = simple_env.Simple(4)
@@ -34,12 +34,11 @@ else:
     A = list(range(n_actions))
 print(n_actions)
 hid_dim = 1000
-active_mem = True
-z_dim = 5
+z_dim = 8
 lr = 4e-4
-mb_dim = 10
+mb_dim = 1
 mem_dim = 400
-n_viter = 40
+n_viter = 20
 n_viter_test = n_viter #can be higher to test for generalization
 '''setup graph'''
 def make_encoder(inp,scope='encoder',reuse=False):
@@ -78,8 +77,6 @@ def kl(p,q):
     return tf.reduce_mean(tf.reduce_sum(p*log_ratio,-1))
 def mse(o,t):
     return tf.reduce_mean(tf.reduce_sum(tf.square(o-t),-1))
-def bce(o,t):
-    return tf.reduce_mean(-tf.reduce_sum(tf.log(tf.clip_by_value(o,eps,np.Inf))*t+tf.log(tf.clip_by_value(1-o,eps,np.Inf))*(1-t),-1))
 _s = tf.placeholder(tf.float32,shape=(None,s_dim))
 _a = []
 _r = []
@@ -140,7 +137,7 @@ for i in range(n_viter):
         s_loss.append(kl(tf.matmul(full_U,full_sim[i]),simPrime[i-1]))
         #tf.summary.scalar('s loss '+str(i-1),s_loss[i-1])
     pred_r.append(tf.reduce_sum(cur_gamma*U*weighted_R,-1))
-    r_loss.append(bce(pred_r[i],_r[i]))
+    r_loss.append(mse(pred_r[i],_r[i]))
     tf.summary.scalar('r loss '+str(i),r_loss[i])
 '''value'''
 V = [tf.zeros((n_actions*mem_dim,))]
@@ -189,11 +186,7 @@ s = np.zeros((mb_dim,s_dim))
 '''grid of points'''
 refresh = int(1e2)
 bub_size = 100
-num_steps = int(1e4)
-if active_mem:
-    epsilon = np.concatenate([np.ones((int(2e3),)),np.linspace(1,.1,int(6e3)),np.ones((int(2e3),))*.1])
-else:
-    epsilon = np.ones((num_steps,))*.1
+epsilon = .1
 act = []
 r = []
 step_r = []
@@ -204,13 +197,12 @@ for i in range(n_viter):
     act.append(np.zeros((mb_dim,),dtype=np.int32))
     step_r.append(np.zeros((mb_dim,1)))
     sPrime.append(np.zeros((mb_dim,s_dim)))
-#initial memories
 for j in range(mem_dim):
     for a in range(n_actions):
         S[a][j] = env.reset()#env.observation_space.sample()
         SPrime[a][j],R[a][j],_,_ = env.step(A[a])#env.get_transition(S[a][j],a)
-oldest = np.zeros((n_actions))
-for i in range(num_steps):
+print('MEM: ','pos: ',R[R>0].sum())
+for i in range(int(1e7)):
     feed_dict = {}
     for a in range(n_actions):
         feed_dict[_mem_s[a]] = S[a]
@@ -225,7 +217,7 @@ for i in range(num_steps):
         s[j] = env.reset()#env.observation_space.sample()
         cur_s = s[j].copy()
         for k in range(n_viter):
-            if np.random.rand() < epsilon[i]:
+            if np.random.rand() < epsilon:
                 act[k][j] = np.random.randint(n_actions)
             else:
                 cached_dict[_s] = [cur_s]
@@ -243,28 +235,7 @@ for i in range(num_steps):
     #assert np.any(step_r[0] != step_r[1])
     train_writer.add_summary(summary)
     cum_loss += cur_loss
-    #add new memories
-    if active_mem:
-        for j in range(mb_dim):
-            a = act[0][j]
-            ind = int(oldest[a])
-            S[a][ind] = s[j].copy()
-            for k in range(n_viter):
-                R[a][ind] = r[k][j]
-                SPrime[a][ind] = sPrime[k][j].copy()
-                if k < (n_viter-1):
-                    S[a][ind] = sPrime[k+1][j].copy()
-                    oldest[a] = (oldest[a]+ 1) % mem_dim
-                    a = act[k+1][j]
-                    ind = int(oldest[a])
-    else:
-        for j in range(mem_dim):
-            for a in range(n_actions):
-                S[a][j] = env.reset()#env.observation_space.sample()
-                SPrime[a][j],R[a][j],_,_ = env.step(A[a])#env.get_transition(S[a][j],a)
     if i % refresh == 0:
-        for j in range(n_actions):
-            print('MEM: ','pos: ',R[j][R[j]>0].sum())
         value = sess.run(mb_Q,feed_dict=feed_dict)
         #print(R.sum())
         cum_diff = 0
@@ -273,7 +244,6 @@ for i in range(num_steps):
         cum_diff = np.squeeze(cum_diff)
         performance = cumr/refresh/mb_dim/n_viter
         print(i,cum_loss,performance,cum_diff.sum(),time.clock()-cur_time)
-        #TODO: should reset memory buffer
         if performance > .1: #task specific to 10x10 grid
             print('+++++++++++winner+++++++++++')
             env.gen_goal()

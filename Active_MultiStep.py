@@ -19,8 +19,8 @@ np.random.seed(111)
 tf.set_random_seed(111)
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
 env = gym.make('Pendulum-v0')
-env = simple_env.Simple(4)
-#env = simple_env.Grid(one_hot=True)
+#env = simple_env.Simple(4)
+env = simple_env.Grid(one_hot=True)
 #env = simple_env.Cycle(2,one_hot=True)
 ''' hyper parameters'''
 s_dim = env.observation_space.shape
@@ -191,7 +191,8 @@ refresh = int(1e2)
 bub_size = 100
 num_steps = int(1e4)
 if active_mem:
-    epsilon = np.concatenate([np.ones((int(2e3),)),np.linspace(1,.1,int(6e3)),np.ones((int(2e3),))*.1])
+    #epsilon = np.concatenate([np.ones((int(2e3),)),np.linspace(1,.1,int(6e3)),np.ones((int(2e3),))*.1])
+    epsilon = np.ones((num_steps,))*.1
 else:
     epsilon = np.ones((num_steps,))*.1
 act = []

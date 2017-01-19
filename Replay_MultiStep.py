@@ -15,8 +15,8 @@ if 'DISPLAY' in os.environ:
 else:
     display = False
     #sys.stdout = open("goat.txt", "w")
-#np.random.seed(111)
-#tf.set_random_seed(111)
+np.random.seed(111)
+tf.set_random_seed(111)
 print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
 env = gym.make('Pendulum-v0')
 env = simple_env.Simple(4)
@@ -34,12 +34,17 @@ else:
     A = list(range(n_actions))
 print(n_actions)
 hid_dim = 1000
-z_dim = 8
+z_dim = 5
 lr = 4e-4
-mb_dim = 1
+mb_dim = 20
 mem_dim = 400
-n_viter = 20
+D_dim = int(1e5)
+n_viter = 10
 n_viter_test = n_viter #can be higher to test for generalization
+'''setup replay buffer'''
+D_S = np.zeros((n_actions,D_dim,s_dim))
+D_SPrime = np.zeros((n_actions,D_dim,s_dim))
+D_R = np.zeros((n_actions,D_dim))
 '''setup graph'''
 def make_encoder(inp,scope='encoder',reuse=False):
     #initial = tf.contrib.layers.xavier_initializer()
@@ -70,13 +75,16 @@ def kernel(z,mem_z,mother='rbf'):
         print('nope')
 def kl(p,q):
     eps = 1e-10
-    ratio = p/tf.clip_by_value(q,eps,np.Inf)
-    log_ratio = tf.log(tf.clip_by_value(ratio,eps,np.Inf))
+    ratio = tf.clip_by_value(p,eps,np.Inf)/tf.clip_by_value(q,eps,np.Inf)
+    log_ratio = tf.log(ratio)
 
     #log_ratio = tf.Print(log_ratio,[tf.reduce_sum(p,-1),tf.reduce_sum(q,-1),tf.reduce_max(log_ratio),tf.reduce_min(log_ratio),tf.reduce_min(ratio)])
     return tf.reduce_mean(tf.reduce_sum(p*log_ratio,-1))
+#these losses assume scalar outputs (e.g. reward predictions)
 def mse(o,t):
-    return tf.reduce_mean(tf.reduce_sum(tf.square(o-t),-1))
+    return tf.reduce_mean(tf.square(o-t))
+def bce(o,t):
+    return -tf.reduce_mean(tf.log(tf.clip_by_value(o,eps,np.Inf))*t+tf.log(tf.clip_by_value(1-o,eps,np.Inf))*(1-t))
 _s = tf.placeholder(tf.float32,shape=(None,s_dim))
 _a = []
 _r = []
@@ -124,7 +132,7 @@ s_loss = []
 cur_sim = []
 full_sim = []
 for i in range(n_viter):
-    cur_gamma = 1.0**i
+    cur_gamma = .9**i
     if i == 0:
         cur_sim.append(np.tile(np.eye(mem_dim,dtype=np.float32),[mb_dim,1,1]))
         full_sim.append(np.eye(n_actions*mem_dim,dtype=np.float32))
@@ -136,9 +144,17 @@ for i in range(n_viter):
         full_sim.append(tf.matmul(full_sim[i-1],full_mem_sim))
         s_loss.append(kl(tf.matmul(full_U,full_sim[i]),simPrime[i-1]))
         #tf.summary.scalar('s loss '+str(i-1),s_loss[i-1])
-    pred_r.append(tf.reduce_sum(cur_gamma*U*weighted_R,-1))
-    r_loss.append(mse(pred_r[i],_r[i]))
+    pred_r.append(tf.reduce_sum(U*weighted_R,-1))
+    r_loss.append(bce(pred_r[i],_r[i]))
     tf.summary.scalar('r loss '+str(i),r_loss[i])
+'''variational stuff'''
+one_step_loss = []
+kl_loss = []
+for i in range(n_viter):
+    cur_U,_ = kernel(z,tf.gather(mem_z,_a[i]))
+    cheat_pred_r = tf.reduce_sum(cur_U*tf.gather(_mem_r,_a[i]),-1)
+    one_step_loss.append(bce(cheat_pred_r,_r[i]))
+    kl_loss.append(kl(tf.stop_gradient(cur_U),tf.batch_matmul(tf.expand_dims(U,1),cur_sim[i])))
 '''value'''
 V = [tf.zeros((n_actions*mem_dim,))]
 bell = _mem_r
@@ -154,6 +170,7 @@ for a in range(n_actions):
 
 '''loss'''
 loss = tf.add_n(r_loss)#+tf.add_n(s_loss)*1e0
+#loss = tf.add_n(one_step_loss) + tf.add_n(kl_loss)
 tf.summary.scalar('net loss',loss)
 optim = tf.train.AdamOptimizer(lr)
 grads_and_vars = optim.compute_gradients(loss)
@@ -186,7 +203,9 @@ s = np.zeros((mb_dim,s_dim))
 '''grid of points'''
 refresh = int(1e2)
 bub_size = 100
-epsilon = .1
+num_steps = int(1e6)
+#epsilon = np.concatenate([np.ones((int(2e3),)),np.linspace(1,.1,int(6e3)),np.ones((int(2e3),))*.1])
+epsilon = np.ones((num_steps,))*.1
 act = []
 r = []
 step_r = []
@@ -197,12 +216,22 @@ for i in range(n_viter):
     act.append(np.zeros((mb_dim,),dtype=np.int32))
     step_r.append(np.zeros((mb_dim,1)))
     sPrime.append(np.zeros((mb_dim,s_dim)))
-for j in range(mem_dim):
+#initial buffer
+print('initial buffer filling...')
+for j in range(D_dim):
     for a in range(n_actions):
-        S[a][j] = env.reset()#env.observation_space.sample()
-        SPrime[a][j],R[a][j],_,_ = env.step(A[a])#env.get_transition(S[a][j],a)
-print('MEM: ','pos: ',R[R>0].sum())
-for i in range(int(1e7)):
+        D_S[a,j,:] = env.reset()#env.observation_space.sample()
+        D_SPrime[a,j,:],D_R[a,j],_,_ = env.step(A[a])#env.get_transition(S[a][j],a)
+print('initial buffer filled')
+oldest = np.zeros((n_actions))
+for i in range(num_steps):
+    #sample from buffer to fill out memories
+    for a in range(n_actions):
+        sample  = np.random.randint(D_dim,size=mem_dim)
+        for j in range(mem_dim):
+            S[a][j,:] = D_S[a,sample[j],:]
+            SPrime[a][j,:] = D_SPrime[a,sample[j],:]
+            R[a][j] = D_R[a,sample[j]]
     feed_dict = {}
     for a in range(n_actions):
         feed_dict[_mem_s[a]] = S[a]
@@ -217,7 +246,7 @@ for i in range(int(1e7)):
         s[j] = env.reset()#env.observation_space.sample()
         cur_s = s[j].copy()
         for k in range(n_viter):
-            if np.random.rand() < epsilon:
+            if np.random.rand() < epsilon[i]:
                 act[k][j] = np.random.randint(n_actions)
             else:
                 cached_dict[_s] = [cur_s]
@@ -235,7 +264,24 @@ for i in range(int(1e7)):
     #assert np.any(step_r[0] != step_r[1])
     train_writer.add_summary(summary)
     cum_loss += cur_loss
+    #add new memories
+    '''
+    for j in range(mb_dim):
+        a = act[0][j]
+        ind = int(oldest[a])
+        D_S[a,ind,:] = s[j].copy()
+        for k in range(n_viter):
+            D_R[a,ind] = r[k][j]
+            D_SPrime[a,ind,:] = sPrime[k][j].copy()
+            if k < (n_viter-1):
+                D_S[a,ind,:] = sPrime[k+1][j].copy()
+                oldest[a] = (oldest[a]+ 1) % D_dim
+                a = act[k+1][j]
+                ind = int(oldest[a])
+    '''
     if i % refresh == 0:
+        for j in range(n_actions):
+            print('MEM: ','pos: ',R[j][R[j]>0].sum())
         value = sess.run(mb_Q,feed_dict=feed_dict)
         #print(R.sum())
         cum_diff = 0
@@ -243,10 +289,19 @@ for i in range(int(1e7)):
             cum_diff += (step_r[j] - r[j])
         cum_diff = np.squeeze(cum_diff)
         performance = cumr/refresh/mb_dim/n_viter
-        print(i,cum_loss,performance,cum_diff.sum(),time.clock()-cur_time)
+        print(i,'loss per sample: ',cum_loss/(n_viter),'reward per step: ',performance,'net pred diff: ',cum_diff.sum(),'time: ',time.clock()-cur_time)
+        #TODO: should reset memory buffer
         if performance > .1: #task specific to 10x10 grid
+            '''
             print('+++++++++++winner+++++++++++')
             env.gen_goal()
+            print('initial buffer filling...')
+            for j in range(D_dim):
+                for a in range(n_actions):
+                    D_S[a,j,:] = env.reset()#env.observation_space.sample()
+                    D_SPrime[a,j,:],D_R[a,j],_,_ = env.step(A[a])#env.get_transition(S[a][j],a)
+            print('initial buffer filled')
+            '''
         cumr = 0
         cur_time = time.clock()
         cum_loss = 0
@@ -324,7 +379,8 @@ for i in range(int(1e7)):
                 plt.bar(np.arange(s_dim),qvals[1]-qvals[0])
 
             plt.pause(.01)
+'''
 plt.ioff()
 plt.show()
-
+'''
 

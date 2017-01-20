@@ -14,9 +14,9 @@ print('hi',sess.run(tf.random_uniform((1,))),np.random.rand())
 env = simple_env.Simple(3)
 ''' hyper parameters'''
 s_dim = env.observation_space.shape
-hid_dim = 128
+hid_dim = 512
 z_dim = 64
-lr = 1e-4
+lr = 1e-3
 mb_dim = 200
 mem_dim = 100
 n_viter = 10

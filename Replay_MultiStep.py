@@ -36,8 +36,8 @@ print(n_actions)
 hid_dim = 1000
 z_dim = 5
 lr = 4e-4
-mb_dim = 20
-mem_dim = 400
+mb_dim = 200
+mem_dim = 100
 D_dim = int(1e5)
 n_viter = 10
 n_viter_test = n_viter #can be higher to test for generalization
@@ -202,7 +202,7 @@ cum_sim_loss = 0
 s = np.zeros((mb_dim,s_dim))
 '''grid of points'''
 refresh = int(1e2)
-bub_size = 100
+bub_size = 50
 num_steps = int(1e6)
 #epsilon = np.concatenate([np.ones((int(2e3),)),np.linspace(1,.1,int(6e3)),np.ones((int(2e3),))*.1])
 epsilon = np.ones((num_steps,))*.1

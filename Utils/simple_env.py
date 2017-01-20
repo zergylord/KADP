@@ -43,7 +43,8 @@ class Simple(object):
     @staticmethod
     def decode(s):
         return s/Simple.limit
-    radius = .25
+    radius = .5
+    goal_size = 1
     limit = 4
     @staticmethod
     def _new_state():
@@ -51,9 +52,9 @@ class Simple(object):
     observation_space = ObservationSpace(2,lambda: Simple._new_state())
     def get_reward(self,SPrime):
         term = ((SPrime[0] >= self.x_goal)
-                 *(SPrime[0] < self.x_goal+self.radius*4)
+                 *(SPrime[0] < self.x_goal+self.goal_size)
                  *(SPrime[1] >= self.y_goal)
-                 *(SPrime[1] < self.y_goal+self.radius*4))
+                 *(SPrime[1] < self.y_goal+self.goal_size))
         return np.float32(term),term
         #return -1,term
     def gen_goal(self):

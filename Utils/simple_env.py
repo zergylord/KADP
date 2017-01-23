@@ -98,6 +98,19 @@ class Simple(object):
         sPrime,r,term = self.get_transition(self.s,a)
         self.s = sPrime
         return sPrime,r,term,False
+    def oracle_policy(self):
+        min_norm = np.Inf
+        best_action = 0
+        mid_goal = self.x_goal+self.goal_size/2,self.y_goal+self.goal_size/2
+        for a in range(self.action_space.n):
+            sPrime,_,_ = self.get_transition(self.s,a)
+            cur_norm = np.linalg.norm(self.encode(sPrime)-mid_goal)
+            if cur_norm < min_norm:
+                min_norm = cur_norm
+                best_action = a
+        return best_action
+
+
 '''
 from matplotlib import pyplot as plt
 env = Simple()

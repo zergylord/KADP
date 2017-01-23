@@ -8,7 +8,7 @@ from Utils import simple_env
 import gym
 import os
 import sys
-if 'DISPLAY' in os.environ:
+if True or 'DISPLAY' in os.environ:
     display = True
     from matplotlib import pyplot as plt
     plt.ion()
@@ -34,11 +34,13 @@ else:
     A = list(range(n_actions))
 print(n_actions)
 hid_dim = 1000
-z_dim = 5
+z_dim = 2 #5
 lr = 4e-4
 mb_dim = 200
 mem_dim = 100
 D_dim = int(1e5)
+adapt_bandwidth = True
+oracle = True
 n_viter = 10
 n_viter_test = n_viter #can be higher to test for generalization
 '''setup replay buffer'''
@@ -47,17 +49,23 @@ D_SPrime = np.zeros((n_actions,D_dim,s_dim))
 D_R = np.zeros((n_actions,D_dim))
 '''setup graph'''
 def make_encoder(inp,scope='encoder',reuse=False):
+    #return inp
     #initial = tf.contrib.layers.xavier_initializer()
     initial = orthogonal_initializer()
     with tf.variable_scope(scope,reuse=reuse):
         hid = linear(inp,hid_dim,'hid1',tf.nn.relu,init=initial)
         hid = linear(hid,hid_dim,'hid2',tf.nn.relu,init=initial)
         last_hid = linear(hid,z_dim,'hid3',init=initial)
+    #last_hid = tf.stop_gradient(last_hid)
     return last_hid
 eps = 1e-10
+if adapt_bandwidth:
+    b = tf.exp(tf.Variable(-8.0,name='width'))
+    tf.summary.scalar('kernel_width',b)
+else:
+    b = .01 # 8.3e-6
 def kernel(z,mem_z,mother='rbf'):
     if mother == 'rbf':
-        b = 1
         rbf = tf.exp(-tf.reduce_sum(tf.square(tf.expand_dims(z,-2)-mem_z),-1)/b) 
         normed = rbf/tf.clip_by_value(tf.reduce_sum(rbf,-1,keep_dims=True),eps,float("inf"))
         return normed,rbf
@@ -145,7 +153,7 @@ for i in range(n_viter):
         s_loss.append(kl(tf.matmul(full_U,full_sim[i]),simPrime[i-1]))
         #tf.summary.scalar('s loss '+str(i-1),s_loss[i-1])
     pred_r.append(tf.reduce_sum(U*weighted_R,-1))
-    r_loss.append(bce(pred_r[i],_r[i]))
+    r_loss.append(bce(pred_r[i],_r[i])*cur_gamma)
     tf.summary.scalar('r loss '+str(i),r_loss[i])
 '''variational stuff'''
 one_step_loss = []
@@ -246,7 +254,9 @@ for i in range(num_steps):
         s[j] = env.reset()#env.observation_space.sample()
         cur_s = s[j].copy()
         for k in range(n_viter):
-            if np.random.rand() < epsilon[i]:
+            if oracle:
+                act[k][j] = env.oracle_policy()
+            elif np.random.rand() < epsilon[i]:
                 act[k][j] = np.random.randint(n_actions)
             else:
                 cached_dict[_s] = [cur_s]
@@ -260,12 +270,11 @@ for i in range(num_steps):
         feed_dict[_r[j]] = r[j]
         feed_dict[_a[j]] = act[j]
         feed_dict[_sPrime[j]] = sPrime[j]
-    _,summary,_,cur_loss,*step_r = sess.run([check_op,merged,train_step,loss,*pred_r],feed_dict=feed_dict)
+    _,summary,_,cur_loss,mb_z,*step_r = sess.run([check_op,merged,train_step,loss,z,*pred_r],feed_dict=feed_dict)
     #assert np.any(step_r[0] != step_r[1])
     train_writer.add_summary(summary)
     cum_loss += cur_loss
     #add new memories
-    '''
     for j in range(mb_dim):
         a = act[0][j]
         ind = int(oldest[a])
@@ -278,7 +287,6 @@ for i in range(num_steps):
                 oldest[a] = (oldest[a]+ 1) % D_dim
                 a = act[k+1][j]
                 ind = int(oldest[a])
-    '''
     if i % refresh == 0:
         for j in range(n_actions):
             print('MEM: ','pos: ',R[j][R[j]>0].sum())
@@ -319,22 +327,35 @@ for i in range(num_steps):
                     Ys[state] = encoded[1]
                 plt.figure(1)
                 plt.clf()
-                plt.subplot(2, 2, 1)
+                plt_rows,plt_cols = 3,4
+                #predicted rewards
+                plt.subplot(plt_rows,plt_cols, 1)
                 plt.scatter(Xs,Ys,s=bub_size,c=step_r[0])
-                plt.subplot(2, 2, 2)
+                plt.subplot(plt_rows,plt_cols, 2)
                 plt.scatter(Xs,Ys,s=bub_size,c=step_r[int(n_viter/2)])
-                plt.subplot(2, 2, 3)
+                plt.subplot(plt_rows,plt_cols, 3)
                 plt.scatter(Xs,Ys,s=bub_size,c=step_r[-1])
-                plt.subplot(2, 2, 4)
+                plt.subplot(plt_rows,plt_cols, 4)
+                #real rewards
                 plt.scatter(Xs,Ys,s=bub_size,c=value)#np.log(value[:,0]+1e-10))
-                plt.figure(2)
-                plt.clf()
-                plt.subplot(2, 2, 1)
+                plt.subplot(plt_rows,plt_cols, 5)
                 plt.scatter(Xs,Ys,s=bub_size,c=r[0])
-                plt.subplot(2, 2, 2)
+                plt.subplot(plt_rows,plt_cols, 6)
                 plt.scatter(Xs,Ys,s=bub_size,c=r[int(n_viter/2)])
-                plt.subplot(2, 2, 3)
+                plt.subplot(plt_rows,plt_cols, 7)
                 plt.scatter(Xs,Ys,s=bub_size,c=r[-1])
+                #latent viz
+                zax = plt.subplot(plt_rows,plt_cols,9)
+                plt.scatter(cached_mem_z[0][:,0],cached_mem_z[0][:,1],c=cached_bell[0])
+                plt.subplot(plt_rows,plt_cols,10,sharex=zax,sharey=zax)
+                plt.scatter(mb_z[:,0],mb_z[:,1],c=value)
+                plt.subplot(plt_rows,plt_cols,11)#,sharex=zax,sharey=zax)
+                #combined = np.concatenate([cached_mem_z[0],mb_z])
+                combined = np.concatenate([S[0],s])
+                combined_colors = np.zeros([combined.shape[0],])
+                combined_colors[mb_dim:] = 1
+                plt.scatter(combined[:,0],combined[:,1],c=combined_colors)
+
                 plt.figure(3)
                 plt.clf()
                 offX = .5*env.radius*np.cos(env.rad_inc*np.arange(n_actions))
